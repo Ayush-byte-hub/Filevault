@@ -101,7 +101,7 @@ export const FilesPage: React.FC<FilesPageProps> = ({
   /**
    * CPAGrip URL Locker Monetization Download Handler for File List
    * Requirements:
-   * 1. Base CPAGrip Locker URL: "https://quartzfiles.com/1912012"
+   * 1. Base CPAGrip Locker URL: "https://www.cpagrip.com/show.php?l=1912012"
    * 2. Cloudflare Worker Endpoint: "https://filestora.kaflea991.workers.dev/download"
    */
   const handleDownloadClick = (file: FileItem) => {
@@ -114,7 +114,7 @@ export const FilesPage: React.FC<FilesPageProps> = ({
     const catboxUrl = file.externalUrl || file.fileUrl;
     const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
     const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
-    const monetizedUrl = `https://quartzfiles.com/1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
+    const monetizedUrl = `https://www.cpagrip.com/show.php?l=1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
 
     if (onQuickDownload) {
       try {
@@ -124,7 +124,7 @@ export const FilesPage: React.FC<FilesPageProps> = ({
       }
     }
 
-    window.location.href = monetizedUrl;
+    window.location.assign(monetizedUrl);
   };
 
   return (

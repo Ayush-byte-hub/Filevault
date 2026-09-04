@@ -63,11 +63,11 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
   /**
    * CPAGrip URL Locker Monetization Download Handler
    * Requirements:
-   * 1. Base CPAGrip Locker URL: "https://quartzfiles.com/1912012"
+   * 1. Base CPAGrip Locker URL: "https://www.cpagrip.com/show.php?l=1912012"
    * 2. Cloudflare Worker Endpoint: "https://filestora.kaflea991.workers.dev/download"
    *
    * Safely encodes parameters, builds the Worker streaming endpoint, wraps inside
-   * CPAGrip's dynamic redirect link with file tracking, and executes window.location.href redirect.
+   * CPAGrip's dynamic redirect link with file tracking, and executes window.location.assign(monetizedUrl).
    */
   const handleDownloadClick = (e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -89,7 +89,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
     const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
 
     // 4. Wrap target URL inside CPAGrip's dynamic redirect link using &target= and &tracking_id=
-    const monetizedUrl = `https://quartzfiles.com/1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
+    const monetizedUrl = `https://www.cpagrip.com/show.php?l=1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
 
     // Optional notification callback if provided by parent
     if (onQuickDownload) {
@@ -101,7 +101,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
     }
 
     // 5. Redirect user to the CPAGrip URL Locker
-    window.location.href = monetizedUrl;
+    window.location.assign(monetizedUrl);
   };
 
   return (

@@ -323,14 +323,14 @@ class FileStorageService {
     const catboxUrl = file.externalUrl || file.fileUrl;
     const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
     const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
-    return `https://quartzfiles.com/1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
+    return `https://www.cpagrip.com/show.php?l=1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
   }
 
   // Trigger CPAGrip Monetized Download redirect
   public triggerMonetizedDownload(file: FileItem): void {
     this.incrementDownload(file.id);
     const monetizedUrl = this.getMonetizedDownloadUrl(file);
-    window.location.href = monetizedUrl;
+    window.location.assign(monetizedUrl);
   }
 
   // Real download trigger (downloads from Catbox.moe, Workers KV, or creates verified fallback)

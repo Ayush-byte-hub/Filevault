@@ -67,9 +67,9 @@ function AppContent() {
     const catboxUrl = file.externalUrl || file.fileUrl;
     const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
     const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
-    const monetizedUrl = `https://quartzfiles.com/1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
+    const monetizedUrl = `https://www.cpagrip.com/show.php?l=1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
 
-    window.location.href = monetizedUrl;
+    window.location.assign(monetizedUrl);
   };
 
   // Route Dispatcher
