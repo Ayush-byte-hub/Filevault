@@ -131,6 +131,62 @@ export class KVStorageClient {
   }
 
   /**
+   * Check if a given URL is from Catbox.moe
+   */
+  public isCatboxUrl(url: string): boolean {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      return parsed.hostname.includes('catbox.moe');
+    } catch {
+      return url.includes('catbox.moe');
+    }
+  }
+
+  /**
+   * Generate an edge proxied download URL for Catbox or external file
+   */
+  public getProxiedDownloadUrl(targetUrl: string, friendlyFilename?: string, forceDirect = false): string {
+    if (forceDirect) return targetUrl;
+    const params = new URLSearchParams({ url: targetUrl });
+    if (friendlyFilename) {
+      params.set('name', friendlyFilename);
+    }
+    return `${this.baseUrl}/download?${params.toString()}`;
+  }
+
+  /**
+   * Register an external URL (such as Catbox.moe) in Workers KV as a pointer
+   */
+  public async registerExternalFile(
+    key: string,
+    externalUrl: string,
+    options?: { filename?: string; contentType?: string; sizeBytes?: number }
+  ): Promise<KVUploadedFile> {
+    const response = await fetch(`${this.baseUrl}/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        key,
+        externalUrl,
+        filename: options?.filename || key,
+        contentType: options?.contentType || 'application/octet-stream',
+        sizeBytes: options?.sizeBytes || 0,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorJson = await response.json().catch(() => ({ error: 'Registration failed' }));
+      throw new Error(errorJson.error || `Failed to register external file (Status ${response.status})`);
+    }
+
+    const result = await response.json();
+    return result.file;
+  }
+
+  /**
    * Delete a file from KV via DELETE /files/:key
    */
   public async deleteFile(key: string): Promise<boolean> {

@@ -282,11 +282,68 @@ class FileStorageService {
     }
   }
 
-  // Real download trigger (generates real verified file payload)
-  public triggerFileDownload(file: FileItem): void {
+  // Check if a URL is hosted on Catbox.moe
+  public isCatboxUrl(url?: string): boolean {
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      return parsed.hostname.includes('catbox.moe');
+    } catch {
+      return url.includes('catbox.moe');
+    }
+  }
+
+  // Get the effective download URL for a file (supports Catbox.moe, Workers KV, or Direct CDN)
+  public getDownloadUrl(file: FileItem, options?: { forceDirect?: boolean }): string {
+    const rawUrl = file.fileUrl?.trim() || '';
+    if (!rawUrl) return '';
+
+    // If it's a Catbox.moe URL
+    if (this.isCatboxUrl(rawUrl)) {
+      if (options?.forceDirect) {
+        return rawUrl;
+      }
+      // Use Worker proxy to deliver customized friendly attachment filename and avoid referrer issues
+      const safeExt = file.fileType?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'zip';
+      const cleanName = `${this.generateSlug(file.title)}-${file.version}.${safeExt}`;
+      return `/download?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(cleanName)}`;
+    }
+
+    // If it's a Workers KV path
+    if (rawUrl.startsWith('/files/')) {
+      const sep = rawUrl.includes('?') ? '&' : '?';
+      return `${rawUrl}${sep}download=true`;
+    }
+
+    return rawUrl;
+  }
+
+  // Real download trigger (downloads from Catbox.moe, Workers KV, or creates verified fallback)
+  public triggerFileDownload(file: FileItem, forceDirect = false): void {
     this.incrementDownload(file.id);
 
-    // Create a real downloadable artifact matching the file metadata so the browser legitimately saves it
+    const targetUrl = this.getDownloadUrl(file, { forceDirect });
+    const isRealUrl =
+      targetUrl &&
+      (targetUrl.startsWith('http://') || targetUrl.startsWith('https://') || targetUrl.startsWith('/'));
+    const isDummyPlaceholder = targetUrl.includes('cloudflare-r2.com/filevault-public/placeholder');
+
+    if (isRealUrl && !isDummyPlaceholder) {
+      const safeExt = file.fileType.toLowerCase().replace(/[^a-z0-9]/g, '') || 'zip';
+      const filename = `${this.generateSlug(file.title)}-${file.version}.${safeExt}`;
+
+      const link = document.createElement('a');
+      link.href = targetUrl;
+      link.download = filename;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
+    // Fallback proof manifest package if no real URL is configured yet
     const fileContent = `================================================================
 FileVault Verified Distribution Release
 ================================================================
@@ -317,7 +374,7 @@ ${file.releaseNotes || 'Standard stable release build.'}
 
 ================================================================
 Downloaded securely from FileVault Platform.
-Direct Cloudflare R2 Verified Distribution.
+Direct Cloudflare Workers KV & Catbox Verified Distribution.
 ================================================================
 `;
 

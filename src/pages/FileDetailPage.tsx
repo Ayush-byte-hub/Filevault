@@ -379,7 +379,7 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
             </div>
           </div>
 
-          {/* Cloudflare R2 Distribution Box */}
+          {/* Storage Distribution Box */}
           <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs space-y-3">
             <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
               <Cloud className="w-5 h-5 text-blue-500 shrink-0" />
@@ -389,7 +389,11 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              Hosted on high-speed S3-compatible Cloudflare R2 edge buckets with unthrottled throughput.
+              {storageService.isCatboxUrl(file.fileUrl)
+                ? 'Hosted on Catbox.moe high-speed storage, streamable and downloadable directly via Filestora edge.'
+                : file.fileUrl.startsWith('/files/')
+                ? 'Stored in Cloudflare Workers KV namespace vault with low-latency edge retrieval.'
+                : 'Hosted on high-speed edge distribution with unthrottled throughput.'}
             </p>
 
             <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/60 font-mono text-[11px] text-slate-600 break-all">
@@ -397,7 +401,14 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
             </div>
 
             <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 font-medium">
-              <span>Origin: Cloudflare R2 Global Edge</span>
+              <span>
+                Origin:{' '}
+                {storageService.isCatboxUrl(file.fileUrl)
+                  ? 'Catbox.moe'
+                  : file.fileUrl.startsWith('/files/')
+                  ? 'Workers KV (FILE_VAULT)'
+                  : 'Direct CDN'}
+              </span>
               <span className="font-bold text-emerald-600">Online</span>
             </div>
           </div>

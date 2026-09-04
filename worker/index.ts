@@ -91,9 +91,17 @@ export default {
       pathname === '/upload' ||
       pathname === '/files' ||
       pathname.startsWith('/files/') ||
+      pathname === '/download' ||
+      pathname === '/api/download' ||
       pathname === '/api/health';
 
-    if (isApiRoute && pathname !== '/api/health' && !env.FILE_VAULT) {
+    if (
+      isApiRoute &&
+      pathname !== '/api/health' &&
+      pathname !== '/download' &&
+      pathname !== '/api/download' &&
+      !env.FILE_VAULT
+    ) {
       return errorResponse(
         'FILE_VAULT KV namespace is not bound. Please bind a KV namespace with variable name FILE_VAULT in your Cloudflare dashboard or wrangler.jsonc.',
         500
@@ -107,7 +115,95 @@ export default {
         service: 'filestora-worker',
         timestamp: new Date().toISOString(),
         kvBound: !!env.FILE_VAULT,
+        catboxSupported: true,
       });
+    }
+
+    // =========================================================================
+    // Catbox.moe / External File Download Proxy: GET /download or /api/download
+    // =========================================================================
+    if ((pathname === '/download' || pathname === '/api/download') && method === 'GET') {
+      try {
+        const targetUrl = url.searchParams.get('url');
+        if (!targetUrl) {
+          return errorResponse('Missing "url" query parameter. Example: /download?url=https://files.catbox.moe/abc123.zip&name=my-app.zip', 400);
+        }
+
+        let parsedTarget: URL;
+        try {
+          parsedTarget = new URL(targetUrl);
+        } catch {
+          return errorResponse('Invalid URL provided.', 400);
+        }
+
+        if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
+          return errorResponse('Only HTTP and HTTPS URLs are supported.', 400);
+        }
+
+        const isDirectRedirect = url.searchParams.get('redirect') === 'true';
+        if (isDirectRedirect) {
+          return Response.redirect(parsedTarget.toString(), 302);
+        }
+
+        // Determine friendly download filename
+        const customName = url.searchParams.get('name') || url.searchParams.get('filename');
+        const urlFilename = parsedTarget.pathname.split('/').filter(Boolean).pop() || 'download';
+        const finalFilename = customName ? customName.trim() : urlFilename;
+
+        // Fetch the file from external host (e.g. files.catbox.moe)
+        const fetchHeaders: Record<string, string> = {
+          'User-Agent': 'Filestora-Worker/1.0',
+          'Accept': '*/*',
+        };
+
+        if (parsedTarget.hostname.includes('catbox.moe')) {
+          fetchHeaders['Referer'] = 'https://catbox.moe/';
+        }
+
+        // Forward Range header if browser requested resume/chunked download
+        const rangeHeader = request.headers.get('range');
+        if (rangeHeader) {
+          fetchHeaders['Range'] = rangeHeader;
+        }
+
+        const externalResponse = await fetch(parsedTarget.toString(), {
+          headers: fetchHeaders,
+          redirect: 'follow',
+        });
+
+        if (!externalResponse.ok && externalResponse.status !== 206) {
+          // If proxy fetch failed, fallback to 302 redirect so user still gets file
+          return Response.redirect(parsedTarget.toString(), 302);
+        }
+
+        const contentType = externalResponse.headers.get('content-type') || guessContentType(finalFilename);
+        const contentLength = externalResponse.headers.get('content-length');
+        const contentRange = externalResponse.headers.get('content-range');
+        const dispositionMode = url.searchParams.get('disposition') === 'inline' ? 'inline' : 'attachment';
+
+        const responseHeaders: Record<string, string> = {
+          'Content-Type': contentType,
+          'Content-Disposition': `${dispositionMode}; filename="${encodeURIComponent(finalFilename)}"`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=86400',
+          ...CORS_HEADERS,
+        };
+
+        if (contentLength) {
+          responseHeaders['Content-Length'] = contentLength;
+        }
+        if (contentRange) {
+          responseHeaders['Content-Range'] = contentRange;
+        }
+
+        return new Response(externalResponse.body, {
+          status: externalResponse.status,
+          headers: responseHeaders,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Failed to download external file: ${errorMsg}`, 500);
+      }
     }
 
     // =========================================================================
@@ -119,6 +215,8 @@ export default {
         let fileData: ArrayBuffer | null = null;
         let contentType = request.headers.get('content-type') || 'application/octet-stream';
         let originalFilename = request.headers.get('x-filename') || '';
+        let externalUrl = url.searchParams.get('externalUrl') || url.searchParams.get('catboxUrl') || '';
+        let customSizeBytes = 0;
 
         const isMultipart = contentType.includes('multipart/form-data');
         const isJson = contentType.includes('application/json');
@@ -127,6 +225,11 @@ export default {
           const formData = await request.formData();
           const fileEntry = formData.get('file');
           const customKey = formData.get('key');
+          const formExternal = formData.get('externalUrl') || formData.get('catboxUrl');
+
+          if (typeof formExternal === 'string' && formExternal.trim()) {
+            externalUrl = formExternal.trim();
+          }
 
           if (typeof customKey === 'string' && customKey.trim()) {
             key = customKey.trim();
@@ -153,6 +256,14 @@ export default {
           if (typeof bodyJson.filename === 'string') {
             originalFilename = bodyJson.filename;
           }
+          if (typeof bodyJson.externalUrl === 'string') {
+            externalUrl = bodyJson.externalUrl;
+          } else if (typeof bodyJson.catboxUrl === 'string') {
+            externalUrl = bodyJson.catboxUrl;
+          }
+          if (typeof bodyJson.sizeBytes === 'number') {
+            customSizeBytes = bodyJson.sizeBytes;
+          }
 
           if (typeof bodyJson.data === 'string') {
             // Check if base64 encoded
@@ -177,14 +288,55 @@ export default {
 
         // Validate Key
         if (!key || !key.trim()) {
-          const ext = contentType.includes('/') ? contentType.split('/')[1] : 'bin';
-          key = `file-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
+          if (externalUrl) {
+            const extPath = new URL(externalUrl).pathname.split('/').pop() || 'file';
+            key = extPath;
+          } else {
+            const ext = contentType.includes('/') ? contentType.split('/')[1] : 'bin';
+            key = `file-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`;
+          }
+        }
+
+        // Handle External URL (e.g. Catbox.moe) reference registration
+        if (externalUrl) {
+          const metadata = {
+            contentType: contentType !== 'application/octet-stream' ? contentType : guessContentType(key),
+            sizeBytes: customSizeBytes || 0,
+            filename: originalFilename || key,
+            uploadedAt: new Date().toISOString(),
+            isExternal: true,
+            externalUrl,
+            source: externalUrl.includes('catbox.moe') ? 'catbox' : 'external',
+          };
+
+          // Store JSON pointer in KV
+          const pointerData = JSON.stringify({ isExternal: true, url: externalUrl, filename: metadata.filename });
+          await env.FILE_VAULT.put(key, pointerData, { metadata });
+
+          const origin = url.origin;
+          return jsonResponse(
+            {
+              success: true,
+              message: 'External file link (Catbox.moe) registered successfully in KV',
+              file: {
+                key,
+                sizeBytes: metadata.sizeBytes,
+                contentType: metadata.contentType,
+                filename: metadata.filename,
+                uploadedAt: metadata.uploadedAt,
+                downloadUrl: `${origin}/files/${encodeURIComponent(key)}`,
+                externalUrl,
+                source: metadata.source,
+              },
+            },
+            201
+          );
         }
 
         // Validate Data
         if (!fileData || fileData.byteLength === 0) {
           return errorResponse(
-            'No file data provided. Send file as multipart/form-data, JSON { key, data }, or raw body.',
+            'No file data or external URL provided. Send file as multipart/form-data, JSON { key, data }, raw body, or provide externalUrl (e.g. Catbox.moe).',
             400
           );
         }
@@ -292,16 +444,65 @@ export default {
           contentType?: string;
           filename?: string;
           sizeBytes?: number;
+          isExternal?: boolean;
+          externalUrl?: string;
         }>(key, 'arrayBuffer');
 
         if (!value) {
           return errorResponse(`File with key "${key}" not found in FILE_VAULT KV.`, 404);
         }
 
+        const isDownload = url.searchParams.get('download') === 'true';
+
+        // Check if this key points to an external file (e.g. Catbox.moe)
+        if (metadata?.isExternal && metadata.externalUrl) {
+          const extUrl = metadata.externalUrl;
+          const filename = metadata.filename || key;
+
+          const fetchHeaders: Record<string, string> = {
+            'User-Agent': 'Filestora-Worker/1.0',
+            'Accept': '*/*',
+          };
+          if (extUrl.includes('catbox.moe')) {
+            fetchHeaders['Referer'] = 'https://catbox.moe/';
+          }
+          const rangeHeader = request.headers.get('range');
+          if (rangeHeader) {
+            fetchHeaders['Range'] = rangeHeader;
+          }
+
+          const extResponse = await fetch(extUrl, {
+            headers: fetchHeaders,
+            redirect: 'follow',
+          });
+
+          if (!extResponse.ok && extResponse.status !== 206) {
+            return Response.redirect(extUrl, 302);
+          }
+
+          const contentType = extResponse.headers.get('content-type') || metadata.contentType || guessContentType(filename);
+          const contentLength = extResponse.headers.get('content-length');
+          const contentRange = extResponse.headers.get('content-range');
+
+          const respHeaders: Record<string, string> = {
+            'Content-Type': contentType,
+            'Content-Disposition': `${isDownload ? 'attachment' : 'inline'}; filename="${encodeURIComponent(filename)}"`,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'public, max-age=86400',
+            ...CORS_HEADERS,
+          };
+          if (contentLength) respHeaders['Content-Length'] = contentLength;
+          if (contentRange) respHeaders['Content-Range'] = contentRange;
+
+          return new Response(extResponse.body, {
+            status: extResponse.status,
+            headers: respHeaders,
+          });
+        }
+
         const fileBuffer = value as ArrayBuffer;
         const contentType = metadata?.contentType || guessContentType(key);
         const filename = metadata?.filename || key;
-        const isDownload = url.searchParams.get('download') === 'true';
 
         return new Response(fileBuffer, {
           status: 200,

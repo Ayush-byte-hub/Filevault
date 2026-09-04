@@ -34,7 +34,9 @@ export interface FileItem {
   isPublished: boolean;
   thumbnailUrl: string;
   screenshots?: string[];
-  fileUrl: string; // Storage URL (R2 bucket or CDN endpoint)
+  fileUrl: string; // Storage URL (Workers KV, Catbox.moe, or CDN endpoint)
+  storageSource?: 'kv' | 'catbox' | 'direct' | 'r2';
+  externalUrl?: string;
   checksum: string; // SHA-256
   md5Checksum?: string;
   tags: string[];

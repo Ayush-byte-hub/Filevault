@@ -8,6 +8,7 @@ import { ImgBbHelperModal } from '../components/ImgBbHelperModal';
 import { SmartImage } from '../components/SmartImage';
 import { adminAuthService } from '../services/adminAuthService';
 import { extractDirectImageUrl, parseMultipleImageUrls } from '../utils/imageHelper';
+import { kvClient } from '../services/kvStorageClient';
 import { useToast } from '../context/ToastContext';
 import {
   LayoutDashboard,
@@ -38,6 +39,8 @@ import {
   ImagePlus,
   Image,
   Sparkles,
+  HardDrive,
+  Check,
 } from 'lucide-react';
 
 interface AdminPageProps {
@@ -46,7 +49,7 @@ interface AdminPageProps {
 
 export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'overview' | 'files' | 'add' | 'r2' | 'data'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'files' | 'add' | 'storage' | 'data'>('overview');
 
   // Files data & filters
   const [filesVersion, setFilesVersion] = useState(0);
@@ -85,8 +88,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
     isPublished: true,
   });
 
-  // R2 Settings
+  // R2 & KV Storage Settings
   const [r2Config, setR2Config] = useState<CloudflareR2Config>(storageService.getR2Config());
+  const [testCatboxUrl, setTestCatboxUrl] = useState('');
+  const [testCatboxStatus, setTestCatboxStatus] = useState<string | null>(null);
 
   // Admin Auth & ImgBB modal state
   const [isAuthenticated, setIsAuthenticated] = useState(() => adminAuthService.isAuthenticated());
@@ -203,6 +208,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
       .map((t) => t.trim())
       .filter(Boolean);
 
+    const cleanFileUrl = formData.fileUrl.trim();
+    const isCatbox = storageService.isCatboxUrl(cleanFileUrl);
+    const isKV = cleanFileUrl.startsWith('/files/');
+    const storageSource: 'catbox' | 'kv' | 'direct' | 'r2' = isCatbox ? 'catbox' : isKV ? 'kv' : 'direct';
+
     const payload = {
       title: formData.title.trim(),
       slug: formData.slug.trim() || storageService.generateSlug(formData.title),
@@ -215,7 +225,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
       version: formData.version.trim() || 'v1.0.0',
       thumbnailUrl: formData.thumbnailUrl.trim() || 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80',
       screenshots: screenshotsArray,
-      fileUrl: formData.fileUrl.trim() || `https://storage.cloudflare-r2.com/filevault-public/releases/${formData.slug}.zip`,
+      fileUrl: cleanFileUrl || (isCatbox ? cleanFileUrl : `/files/${formData.slug}`),
+      storageSource,
+      externalUrl: isCatbox ? cleanFileUrl : undefined,
       checksum: formData.checksum.trim() || storageService.generateDummySha256(formData.title),
       tags: tagsArray.length > 0 ? tagsArray : ['general'],
       compatibility: formData.compatibility.trim(),
@@ -226,6 +238,14 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
       isPublished: formData.isPublished,
       safetyVerified: true,
     };
+
+    // If Catbox URL, register pointer in Workers KV asynchronously as well
+    if (isCatbox && cleanFileUrl) {
+      kvClient.registerExternalFile(payload.slug, cleanFileUrl, {
+        filename: `${payload.slug}.${payload.fileType.toLowerCase()}`,
+        sizeBytes: payload.fileSizeBytes,
+      }).catch(() => {});
+    }
 
     if (editingId) {
       storageService.updateFile(editingId, payload);
@@ -432,15 +452,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
         </button>
 
         <button
-          onClick={() => setActiveTab('r2')}
+          onClick={() => setActiveTab('storage')}
           className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors shrink-0 ${
-            activeTab === 'r2'
+            activeTab === 'storage'
               ? 'bg-slate-900 text-white font-semibold'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
-          <Cloud className="w-3.5 h-3.5" />
-          <span>Cloudflare R2 Integration</span>
+          <HardDrive className="w-3.5 h-3.5" />
+          <span>Workers KV & Catbox Hosting</span>
         </button>
 
         <button
@@ -914,19 +934,70 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
             {/* Storage URL & Checksum */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Cloudflare R2 / Storage URL *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    File Download / Storage URL *
+                  </label>
+                  <a
+                    href="https://catbox.moe"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-amber-700 hover:text-amber-800 font-semibold flex items-center gap-1 hover:underline"
+                    title="Upload files up to 200MB free on Catbox.moe"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>Upload to Catbox.moe</span>
+                  </a>
+                </div>
                 <input
-                  type="url"
+                  type="text"
                   value={formData.fileUrl}
-                  onChange={(e) => setFormData({ ...formData, fileUrl: e.target.value })}
-                  placeholder="https://storage.cloudflare-r2.com/filevault-public/..."
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updates: Record<string, string> = { fileUrl: val };
+                    // If user pastes Catbox URL, try detecting extension
+                    if (storageService.isCatboxUrl(val)) {
+                      try {
+                        const path = new URL(val).pathname;
+                        const ext = path.split('.').pop()?.toUpperCase();
+                        if (ext && ext.length <= 4) {
+                          updates.fileType = ext;
+                        }
+                      } catch {}
+                    }
+                    setFormData({ ...formData, ...updates });
+                  }}
+                  placeholder="https://files.catbox.moe/abc123.zip or /files/vault-key"
                   className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full font-mono"
                 />
-                <span className="text-[11px] text-slate-400 block mt-1 ml-2">
-                  Configurable storage endpoint. Real downloads connect to this URL.
-                </span>
+
+                {storageService.isCatboxUrl(formData.fileUrl) ? (
+                  <div className="mt-2 p-2.5 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-between text-[11px] text-amber-900">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Catbox.moe URL active • Filestora edge proxy will stream & download directly</span>
+                    </div>
+                    <a
+                      href={formData.fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-800 underline font-semibold shrink-0 ml-2"
+                    >
+                      Test Direct Link
+                    </a>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1 ml-2">
+                    <span>Supports Catbox.moe (https://files.catbox.moe/...), Workers KV (/files/:key), or direct URL.</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, fileUrl: 'https://files.catbox.moe/example.zip', fileType: 'ZIP' })}
+                      className="text-blue-600 hover:text-blue-800 text-[10px] font-semibold underline"
+                    >
+                      Insert Catbox sample
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1127,100 +1198,184 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
         </form>
       )}
 
-      {/* TAB 4: CLOUDFLARE R2 INTEGRATION GUIDE & CONFIG */}
-      {activeTab === 'r2' && (
+      {/* TAB 4: WORKERS KV & CATBOX.MOE STORAGE & HOSTING */}
+      {activeTab === 'storage' && (
         <div className="space-y-6">
+          {/* Top Banner */}
           <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 shadow-xs space-y-6">
             <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
-              <div className="w-10 h-10 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-200/60">
-                <Cloud className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200/60">
+                <HardDrive className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Cloudflare R2 Object Storage Configuration
+                  Workers KV & Catbox.moe File Distribution Architecture
                 </h3>
                 <p className="text-xs text-slate-500">
-                  High-speed S3-compatible asset bucket settings with zero egress fees.
+                  Direct key-value storage via Cloudflare Workers KV and unthrottled downloads via Catbox.moe edge proxy.
                 </p>
               </div>
             </div>
 
-            {/* Security Guarantee Notice */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3 text-xs">
-              <ShieldAlert className="w-5 h-5 text-slate-800 shrink-0 mt-0.5" />
-              <div className="space-y-1 text-slate-700 leading-relaxed">
-                <p className="font-semibold text-slate-900">
-                  Security Architecture: Zero Client Credential Exposure
-                </p>
-                <p className="text-[11px] text-slate-600">
-                  In accordance with strict security standards, private Cloudflare R2 tokens, API tokens, and secret access keys are
-                  <strong> strictly stored server-side</strong> (in Cloudflare Workers or server-side environment variables). The frontend
-                  retrieves public URLs directly or requests short-lived signed URLs via authenticated backend routes.
-                </p>
+            {/* Storage Modules Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Catbox.moe Integration Module */}
+              <div className="rounded-2xl border border-amber-200/80 bg-amber-50/40 p-5 space-y-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100/80 text-amber-900 text-xs font-bold border border-amber-300/60">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                      Catbox.moe Integration
+                    </span>
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full">
+                      Free & Permanent
+                    </span>
+                  </div>
+
+                  <h4 className="text-sm font-bold text-slate-900 mb-1">
+                    Direct External File Hosting
+                  </h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Upload your files directly to <strong>Catbox.moe</strong> (up to 200MB free per file, permanently hosted) or <strong>Litterbox</strong> (up to 1GB temporary).
+                  </p>
+
+                  <div className="mt-3 space-y-2 text-xs text-slate-700 bg-white/80 rounded-xl p-3 border border-amber-200/60">
+                    <p className="font-semibold text-slate-900">How Filestora handles Catbox:</p>
+                    <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600">
+                      <li>Upload your file at <a href="https://catbox.moe" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline font-semibold">catbox.moe</a>.</li>
+                      <li>Copy the generated link (e.g. <code className="bg-slate-100 px-1 py-0.5 rounded text-[10px]">https://files.catbox.moe/abc123.zip</code>).</li>
+                      <li>Paste into the File URL input in Filestora.</li>
+                      <li>Filestora automatically proxies the file through its Cloudflare Worker edge with clean download headers and custom filenames!</li>
+                    </ol>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <a
+                    href="https://catbox.moe"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-2 px-3 text-center text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open Catbox.moe</span>
+                  </a>
+                  <a
+                    href="https://litterbox.catbox.moe"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2 px-3 text-center text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <span>Litterbox (1GB)</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Workers KV Storage Module */}
+              <div className="rounded-2xl border border-blue-200/80 bg-blue-50/40 p-5 space-y-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-100/80 text-blue-900 text-xs font-bold border border-blue-300/60">
+                      <HardDrive className="w-3.5 h-3.5 text-blue-600" />
+                      Cloudflare Workers KV
+                    </span>
+                    <span className="text-[11px] font-bold text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded-full">
+                      FILE_VAULT Bound
+                    </span>
+                  </div>
+
+                  <h4 className="text-sm font-bold text-slate-900 mb-1">
+                    Native Edge Key-Value Store
+                  </h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Bound directly to your Cloudflare Worker with ultra-low latency worldwide replication.
+                  </p>
+
+                  <div className="mt-3 space-y-2 text-xs text-slate-700 bg-white/80 rounded-xl p-3 border border-blue-200/60">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-500">Binding Name:</span>
+                      <code className="font-bold text-blue-800">env.FILE_VAULT</code>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-500">Upload API:</span>
+                      <code className="font-bold text-slate-700">POST /upload</code>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-500">Fetch API:</span>
+                      <code className="font-bold text-slate-700">GET /files/:key</code>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-slate-500">Max Value Size:</span>
+                      <span className="font-bold text-slate-800">25 MB per KV key</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-500 leading-relaxed pt-1">
+                  💡 For files larger than 25MB, simply upload them to Catbox.moe and paste the link into Filestora for unlimited free storage!
+                </div>
               </div>
             </div>
 
-            <form onSubmit={handleSaveR2} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    R2 Bucket Name
-                  </label>
-                  <input
-                    type="text"
-                    value={r2Config.bucketName}
-                    onChange={(e) => setR2Config({ ...r2Config, bucketName: e.target.value })}
-                    className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full font-mono"
-                  />
-                </div>
+            {/* Live Catbox Download Proxy Tester */}
+            <div className="border-t border-slate-100 pt-6">
+              <h4 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                <span>Test Catbox.moe Download Stream</span>
+              </h4>
+              <p className="text-xs text-slate-500 mb-4">
+                Paste any Catbox.moe URL below to test downloading it through your website's edge proxy.
+              </p>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Custom CDN Domain
-                  </label>
-                  <input
-                    type="url"
-                    value={r2Config.customDomain}
-                    onChange={(e) => setR2Config({ ...r2Config, customDomain: e.target.value })}
-                    placeholder="https://cdn.filevault.org"
-                    className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Public R2 Endpoint
-                </label>
+              <div className="flex flex-col sm:flex-row items-center gap-3">
                 <input
-                  type="url"
-                  value={r2Config.publicEndpoint}
-                  onChange={(e) => setR2Config({ ...r2Config, publicEndpoint: e.target.value })}
-                  className="w-full px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full font-mono"
+                  type="text"
+                  value={testCatboxUrl}
+                  onChange={(e) => {
+                    setTestCatboxUrl(e.target.value);
+                    setTestCatboxStatus(null);
+                  }}
+                  placeholder="https://files.catbox.moe/abc123.zip"
+                  className="w-full sm:flex-1 px-4 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full font-mono"
                 />
-              </div>
-
-              <div className="flex items-center gap-3 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-800">
-                  <input
-                    type="checkbox"
-                    checked={r2Config.presignedEnabled}
-                    onChange={(e) => setR2Config({ ...r2Config, presignedEnabled: e.target.checked })}
-                    className="w-4 h-4 rounded text-slate-900"
-                  />
-                  <span>Enable Presigned Download URL generator for private binary packages</span>
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex justify-end">
                 <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-full transition-colors shadow-xs"
+                  type="button"
+                  onClick={() => {
+                    if (!testCatboxUrl.trim()) {
+                      showToast('Missing URL', 'Please paste a valid Catbox.moe link first', 'warning');
+                      return;
+                    }
+                    if (!storageService.isCatboxUrl(testCatboxUrl)) {
+                      showToast('Warning', 'URL does not appear to be hosted on catbox.moe, but testing anyway', 'info');
+                    }
+                    const cleanName = 'test-catbox-download.zip';
+                    const proxyUrl = `/download?url=${encodeURIComponent(testCatboxUrl.trim())}&name=${encodeURIComponent(cleanName)}`;
+                    
+                    const link = document.createElement('a');
+                    link.href = proxyUrl;
+                    link.download = cleanName;
+                    link.target = '_blank';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    setTestCatboxStatus('Download stream initiated via /download proxy!');
+                    showToast('Proxy Triggered', 'Attempting edge proxy transfer', 'success');
+                  }}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-full transition-colors flex items-center justify-center gap-2 shadow-xs shrink-0"
                 >
-                  Save R2 Configuration
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Test Edge Download</span>
                 </button>
               </div>
-            </form>
+
+              {testCatboxStatus && (
+                <div className="mt-3 p-3 rounded-2xl bg-emerald-50 border border-emerald-200/80 text-xs text-emerald-800 flex items-center gap-2 font-medium">
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{testCatboxStatus}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
