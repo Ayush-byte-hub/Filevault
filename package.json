@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "deploy:pages": "npm run build && npx wrangler pages deploy dist",
+    "deploy:worker": "npm run build && npx wrangler deploy"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
