@@ -1,9 +1,17 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "filestora",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-01-01",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application"
-  }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "FILE_VAULT",
+      "id": "FILE_VAULT"
+    }
+  ]
 }
