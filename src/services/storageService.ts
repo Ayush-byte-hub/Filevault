@@ -318,19 +318,24 @@ class FileStorageService {
     return rawUrl;
   }
 
-  // Construct CPAGrip Monetized Download URL with Cloudflare Worker Target
-  public getMonetizedDownloadUrl(file: FileItem): string {
-    const catboxUrl = file.externalUrl || file.fileUrl;
-    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
-    const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
-    return `https://www.cpagrip.com/show.php?l=1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
-  }
-
-  // Trigger CPAGrip Monetized Download redirect
+  // Trigger CPAGrip Content Locker overlay
   public triggerMonetizedDownload(file: FileItem): void {
     this.incrementDownload(file.id);
-    const monetizedUrl = this.getMonetizedDownloadUrl(file);
-    window.location.assign(monetizedUrl);
+
+    const catboxUrl = file.externalUrl || file.fileUrl;
+    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
+    const targetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
+
+    // Set CPAGrip variables dynamically for target redirect and analytics tracking
+    (window as any).target_url = targetUrl;
+    (window as any).tracking_id = encodeURIComponent(file.title);
+
+    // Trigger CPAGrip overlay locker
+    if (typeof (window as any).call_locker === 'function') {
+      (window as any).call_locker();
+    } else {
+      window.location.href = targetUrl;
+    }
   }
 
   // Real download trigger (downloads from Catbox.moe, Workers KV, or creates verified fallback)

@@ -61,37 +61,30 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
   };
 
   /**
-   * CPAGrip URL Locker Monetization Download Handler
-   * Requirements:
-   * 1. Base CPAGrip Locker URL: "https://www.cpagrip.com/show.php?l=1912012"
-   * 2. Cloudflare Worker Endpoint: "https://filestora.kaflea991.workers.dev/download"
-   *
-   * Safely encodes parameters, builds the Worker streaming endpoint, wraps inside
-   * CPAGrip's dynamic redirect link with file tracking, and executes window.location.assign(monetizedUrl).
+   * CPAGrip Content Locker Widget Download Handler
+   * Locker ID: 1912023
+   * Sets dynamic worker target URL and tracking_id, then triggers window.call_locker()
    */
   const handleDownloadClick = (e?: React.MouseEvent) => {
-    e?.stopPropagation();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
 
-    // Increment local download metrics
     try {
       storageService.incrementDownload(file.id);
     } catch {
       // ignore
     }
 
-    // 1. Resolve source file URL (Catbox.moe or stored file URL)
     const catboxUrl = file.externalUrl || file.fileUrl;
-
-    // 2. Derive file name
     const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
+    const targetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
 
-    // 3. Construct Cloudflare Worker target URL with safely encoded query parameters
-    const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
+    // Set CPAGrip variables dynamically for target redirect and analytics tracking
+    (window as any).target_url = targetUrl;
+    (window as any).tracking_id = encodeURIComponent(file.title);
 
-    // 4. Wrap target URL inside CPAGrip's dynamic redirect link using &target= and &tracking_id=
-    const monetizedUrl = `https://www.cpagrip.com/show.php?l=1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
-
-    // Optional notification callback if provided by parent
     if (onQuickDownload) {
       try {
         onQuickDownload(file);
@@ -100,8 +93,13 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
       }
     }
 
-    // 5. Redirect user to the CPAGrip URL Locker
-    window.location.assign(monetizedUrl);
+    // Trigger CPAGrip overlay locker
+    if (typeof (window as any).call_locker === 'function') {
+      (window as any).call_locker();
+    } else {
+      // Fallback direct download if script is unreachable
+      window.location.href = targetUrl;
+    }
   };
 
   return (
