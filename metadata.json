@@ -1,0 +1,7 @@
+{
+  "name": "FileVault",
+  "description": "A clean, modern, and minimal file-hosting and download platform with verified distributions, category browsing, and file management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
