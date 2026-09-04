@@ -1,5 +1,6 @@
 import React from 'react';
 import { FileItem } from '../types';
+import { storageService } from '../services/storageService';
 import { SmartImage } from './SmartImage';
 import {
   Download,
@@ -57,6 +58,50 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
       return `${(count / 1000).toFixed(1)}k`;
     }
     return count.toString();
+  };
+
+  /**
+   * CPAGrip URL Locker Monetization Download Handler
+   * Requirements:
+   * 1. Base CPAGrip Locker URL: "https://quartzfiles.com/1912012"
+   * 2. Cloudflare Worker Endpoint: "https://filestora.kaflea991.workers.dev/download"
+   *
+   * Safely encodes parameters, builds the Worker streaming endpoint, wraps inside
+   * CPAGrip's dynamic redirect link with file tracking, and executes window.location.href redirect.
+   */
+  const handleDownloadClick = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+
+    // Increment local download metrics
+    try {
+      storageService.incrementDownload(file.id);
+    } catch {
+      // ignore
+    }
+
+    // 1. Resolve source file URL (Catbox.moe or stored file URL)
+    const catboxUrl = file.externalUrl || file.fileUrl;
+
+    // 2. Derive file name
+    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
+
+    // 3. Construct Cloudflare Worker target URL with safely encoded query parameters
+    const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
+
+    // 4. Wrap target URL inside CPAGrip's dynamic redirect link using &target= and &tracking_id=
+    const monetizedUrl = `https://quartzfiles.com/1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
+
+    // Optional notification callback if provided by parent
+    if (onQuickDownload) {
+      try {
+        onQuickDownload(file);
+      } catch {
+        // ignore
+      }
+    }
+
+    // 5. Redirect user to the CPAGrip URL Locker
+    window.location.href = monetizedUrl;
   };
 
   return (
@@ -164,14 +209,8 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
 
           <button
             id={`download-btn-${file.slug}`}
-            onClick={() => {
-              if (onQuickDownload) {
-                onQuickDownload(file);
-              } else {
-                onNavigate(`/file/${file.slug}/download`);
-              }
-            }}
-            className="w-full text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl py-2 px-3 transition-all flex items-center justify-center gap-1.5 shadow-xs"
+            onClick={handleDownloadClick}
+            className="w-full text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl py-2 px-3 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Download</span>

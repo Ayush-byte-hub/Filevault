@@ -58,12 +58,18 @@ function AppContent() {
   };
 
   const handleQuickDownload = (file: FileItem) => {
-    storageService.triggerFileDownload(file);
-    showToast(
-      'Download Started',
-      `Verified package for ${file.title} (${file.fileSize}) initiated.`,
-      'success'
-    );
+    try {
+      storageService.incrementDownload(file.id);
+    } catch {
+      // ignore
+    }
+
+    const catboxUrl = file.externalUrl || file.fileUrl;
+    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
+    const workerTargetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
+    const monetizedUrl = `https://quartzfiles.com/1912012&tracking_id=${encodeURIComponent(fileName)}&target=${encodeURIComponent(workerTargetUrl)}`;
+
+    window.location.href = monetizedUrl;
   };
 
   // Route Dispatcher
