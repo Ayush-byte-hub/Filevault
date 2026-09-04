@@ -315,13 +315,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
     reader.readAsText(file);
   };
 
-  const handleUpdatePasscode = (e: React.FormEvent) => {
+  const handleUpdatePasscode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passcodeNew !== passcodeConfirm) {
       showToast('Mismatch', 'New passcode confirmation does not match.', 'error');
       return;
     }
-    const res = adminAuthService.changePasscode(passcodeCurrent, passcodeNew);
+    const res = await adminAuthService.changePasscode(passcodeCurrent, passcodeNew);
     if (res.success) {
       showToast('Security Updated', res.message, 'success');
       setPasscodeCurrent('');
@@ -1358,8 +1358,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                   >
                     Update Passcode
                   </button>
-                  <span className="text-[11px] text-slate-400">
-                    Default: {adminAuthService.getDefaultPasscode()}
+                  <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60">
+                    Salted SHA-256 Protected
                   </span>
                 </div>
               </form>
