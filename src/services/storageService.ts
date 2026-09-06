@@ -375,6 +375,24 @@ class FileStorageService {
     return created;
   }
 
+  public async addFileAndPersist(
+    fileData: Omit<FileItem, 'id' | 'uploadDate' | 'updatedDate' | 'downloadCount'>
+  ): Promise<{ file: FileItem; cloudSaved: boolean }> {
+    const file = this.addFile(fileData);
+    const cloudSaved = await this.pushFileToCloud(file).catch(() => false);
+    return { file, cloudSaved };
+  }
+
+  public async updateFileAndPersist(
+    id: string,
+    updates: Partial<FileItem>
+  ): Promise<{ file: FileItem | null; cloudSaved: boolean }> {
+    const file = this.updateFile(id, updates);
+    if (!file) return { file: null, cloudSaved: false };
+    const cloudSaved = await this.pushFileToCloud(file).catch(() => false);
+    return { file, cloudSaved };
+  }
+
   public updateFile(id: string, updates: Partial<FileItem>): FileItem | null {
     const files = this.getStoredFiles();
     const index = files.findIndex((f) => f.id === id);

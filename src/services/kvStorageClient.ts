@@ -36,7 +36,16 @@ export class KVStorageClient {
   private baseUrl: string;
 
   constructor(baseUrl = '') {
-    // If empty string, uses current origin (ideal when worker serves frontend)
+    if (!baseUrl && typeof window !== 'undefined') {
+      if (
+        !window.location.origin ||
+        window.location.origin.includes('localhost') ||
+        window.location.origin.includes('3000') ||
+        window.location.origin.includes('asia-southeast1.run.app')
+      ) {
+        baseUrl = 'https://filestora.kaflea991.workers.dev';
+      }
+    }
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 

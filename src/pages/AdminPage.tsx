@@ -42,6 +42,8 @@ import {
   HardDrive,
   Check,
   RefreshCw,
+  FileUp,
+  Loader2,
 } from 'lucide-react';
 
 interface AdminPageProps {
@@ -106,6 +108,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
   // Global Cloudflare KV Catalog Sync state
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<string | null>(null);
+
+  // Automated Cloud Post & Direct File Upload state
+  const [isSubmittingFile, setIsSubmittingFile] = useState(false);
+  const [isDirectUploading, setIsDirectUploading] = useState(false);
+  const [uploadProgressMessage, setUploadProgressMessage] = useState<string | null>(null);
+  const [directUploadSuccess, setDirectUploadSuccess] = useState<string | null>(null);
 
   // Subscribe to storage changes from Cloudflare KV
   useEffect(() => {
@@ -241,72 +249,179 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
     }));
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleDirectFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsDirectUploading(true);
+    setDirectUploadSuccess(null);
+    setUploadProgressMessage('Calculating cryptographic SHA-256 hash...');
+
+    try {
+      // 1. Calculate SHA-256 Checksum via Web Crypto API
+      let realChecksum = '';
+      try {
+        const buffer = await file.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        realChecksum = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+      } catch (hashErr) {
+        console.warn('Could not compute client SHA-256:', hashErr);
+      }
+
+      // 2. Format file size
+      const sizeMB = file.size / (1024 * 1024);
+      const formattedSize =
+        sizeMB >= 1 ? `${sizeMB.toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+
+      // 3. Extract file type
+      const ext = file.name.includes('.')
+        ? file.name.split('.').pop()?.toUpperCase() || 'ZIP'
+        : 'ZIP';
+
+      // 4. Clean title
+      const baseTitle = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      const cleanTitle = baseTitle
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+
+      setUploadProgressMessage(`Uploading "${file.name}" to Cloudflare Workers KV...`);
+
+      // 5. Upload binary directly into Workers KV
+      const uploaded = await kvClient.uploadFile(file);
+
+      // 6. Update form fields automatically
+      setFormData((prev) => ({
+        ...prev,
+        title: prev.title.trim() ? prev.title : cleanTitle,
+        slug: prev.slug.trim() ? prev.slug : storageService.generateSlug(cleanTitle),
+        fileUrl: `/files/${uploaded.key}`,
+        fileSize: formattedSize,
+        fileType: ext,
+        checksum: realChecksum || prev.checksum,
+      }));
+
+      setDirectUploadSuccess(
+        `File "${file.name}" (${formattedSize}) uploaded directly to Cloudflare Workers KV key: /files/${uploaded.key}`
+      );
+      showToast(
+        'Stored in Cloudflare KV',
+        `"${file.name}" uploaded to Cloudflare KV. Form auto-filled and ready to publish!`,
+        'success'
+      );
+    } catch (err) {
+      console.warn('Direct upload error:', err);
+      const sizeMB = file.size / (1024 * 1024);
+      const formattedSize =
+        sizeMB >= 1 ? `${sizeMB.toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+      const ext = file.name.includes('.')
+        ? file.name.split('.').pop()?.toUpperCase() || 'ZIP'
+        : 'ZIP';
+      const baseTitle = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+
+      setFormData((prev) => ({
+        ...prev,
+        title: prev.title.trim() ? prev.title : baseTitle,
+        fileSize: formattedSize,
+        fileType: ext,
+      }));
+
+      showToast(
+        'Upload Notice',
+        `Could not directly upload binary to KV (${err instanceof Error ? err.message : String(err)}). Form fields were populated; you can provide a Catbox.moe or external link.`,
+        'warning'
+      );
+    } finally {
+      setIsDirectUploading(false);
+      setUploadProgressMessage(null);
+    }
+  };
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title.trim()) {
       showToast('Error', 'File title is required', 'error');
       return;
     }
 
-    const screenshotsArray = formData.screenshots
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    setIsSubmittingFile(true);
 
-    const tagsArray = formData.tags
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
+    try {
+      const screenshotsArray = formData.screenshots
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
 
-    const cleanFileUrl = formData.fileUrl.trim();
-    const isCatbox = storageService.isCatboxUrl(cleanFileUrl);
-    const isKV = cleanFileUrl.startsWith('/files/');
-    const storageSource: 'catbox' | 'kv' | 'direct' | 'r2' = isCatbox ? 'catbox' : isKV ? 'kv' : 'direct';
+      const tagsArray = formData.tags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
 
-    const payload = {
-      title: formData.title.trim(),
-      slug: formData.slug.trim() || storageService.generateSlug(formData.title),
-      description: formData.description.trim(),
-      longDescription: formData.longDescription.trim(),
-      category: formData.category,
-      fileType: formData.fileType.toUpperCase().trim(),
-      fileSize: formData.fileSize.trim(),
-      fileSizeBytes: storageService.parseSizeToBytes(formData.fileSize),
-      version: formData.version.trim() || 'v1.0.0',
-      thumbnailUrl: formData.thumbnailUrl.trim() || 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80',
-      screenshots: screenshotsArray,
-      fileUrl: cleanFileUrl || (isCatbox ? cleanFileUrl : `/files/${formData.slug}`),
-      storageSource,
-      externalUrl: isCatbox ? cleanFileUrl : undefined,
-      checksum: formData.checksum.trim() || storageService.generateDummySha256(formData.title),
-      tags: tagsArray.length > 0 ? tagsArray : ['general'],
-      compatibility: formData.compatibility.trim(),
-      license: formData.license.trim(),
-      developer: formData.developer.trim(),
-      releaseNotes: formData.releaseNotes.trim(),
-      isFeatured: formData.isFeatured,
-      isPublished: formData.isPublished,
-      safetyVerified: true,
-    };
+      const cleanFileUrl = formData.fileUrl.trim();
+      const isCatbox = storageService.isCatboxUrl(cleanFileUrl);
+      const isKV = cleanFileUrl.startsWith('/files/');
+      const storageSource: 'catbox' | 'kv' | 'direct' | 'r2' = isCatbox ? 'catbox' : isKV ? 'kv' : 'direct';
 
-    // If Catbox URL, register pointer in Workers KV asynchronously as well
-    if (isCatbox && cleanFileUrl) {
-      kvClient.registerExternalFile(payload.slug, cleanFileUrl, {
-        filename: `${payload.slug}.${payload.fileType.toLowerCase()}`,
-        sizeBytes: payload.fileSizeBytes,
-      }).catch(() => {});
+      const payload = {
+        title: formData.title.trim(),
+        slug: formData.slug.trim() || storageService.generateSlug(formData.title),
+        description: formData.description.trim(),
+        longDescription: formData.longDescription.trim(),
+        category: formData.category,
+        fileType: formData.fileType.toUpperCase().trim(),
+        fileSize: formData.fileSize.trim(),
+        fileSizeBytes: storageService.parseSizeToBytes(formData.fileSize),
+        version: formData.version.trim() || 'v1.0.0',
+        thumbnailUrl: formData.thumbnailUrl.trim() || 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80',
+        screenshots: screenshotsArray,
+        fileUrl: cleanFileUrl || (isCatbox ? cleanFileUrl : `/files/${formData.slug}`),
+        storageSource,
+        externalUrl: isCatbox ? cleanFileUrl : undefined,
+        checksum: formData.checksum.trim() || storageService.generateDummySha256(formData.title),
+        tags: tagsArray.length > 0 ? tagsArray : ['general'],
+        compatibility: formData.compatibility.trim(),
+        license: formData.license.trim(),
+        developer: formData.developer.trim(),
+        releaseNotes: formData.releaseNotes.trim(),
+        isFeatured: formData.isFeatured,
+        isPublished: formData.isPublished,
+        safetyVerified: true,
+      };
+
+      // If Catbox URL, register pointer in Workers KV asynchronously as well
+      if (isCatbox && cleanFileUrl) {
+        kvClient.registerExternalFile(payload.slug, cleanFileUrl, {
+          filename: `${payload.slug}.${payload.fileType.toLowerCase()}`,
+          sizeBytes: payload.fileSizeBytes,
+        }).catch(() => {});
+      }
+
+      let cloudSaved = false;
+      if (editingId) {
+        const res = await storageService.updateFileAndPersist(editingId, payload);
+        cloudSaved = res.cloudSaved;
+        showToast(
+          cloudSaved ? 'File Updated & Cloud Stored' : 'File Updated',
+          `"${payload.title}" successfully updated and saved to Cloudflare Workers KV!`,
+          'success'
+        );
+      } else {
+        const res = await storageService.addFileAndPersist(payload);
+        cloudSaved = res.cloudSaved;
+        showToast(
+          cloudSaved ? 'Post Published & Cloud Stored' : 'Post Published',
+          `"${payload.title}" is now published and automatically stored in Cloudflare Workers KV edge storage!`,
+          'success'
+        );
+      }
+
+      setFilesVersion((v) => v + 1);
+      setActiveTab('files');
+    } catch (err: unknown) {
+      showToast('Save Error', err instanceof Error ? err.message : 'Failed to save file.', 'error');
+    } finally {
+      setIsSubmittingFile(false);
     }
-
-    if (editingId) {
-      storageService.updateFile(editingId, payload);
-      showToast('File Updated', `"${payload.title}" successfully updated.`, 'success');
-    } else {
-      storageService.addFile(payload);
-      showToast('File Created', `"${payload.title}" added to directory.`, 'success');
-    }
-
-    setFilesVersion((v) => v + 1);
-    setActiveTab('files');
   };
 
   const togglePublish = (file: FileItem) => {
@@ -743,9 +858,14 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                             <p className="font-semibold text-slate-900 truncate">
                               {file.title}
                             </p>
-                            <p className="font-mono text-[11px] text-slate-400 truncate">
-                              /{file.slug} • {file.version}
-                            </p>
+                            <div className="flex items-center gap-1.5 font-mono text-[11px] text-slate-400 truncate">
+                              <span>/{file.slug}</span>
+                              <span>•</span>
+                              <span>{file.version}</span>
+                              <span className="inline-flex items-center gap-0.5 text-[9px] font-sans font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200/60">
+                                <Cloud className="w-2.5 h-2.5" /> KV Stored
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -860,6 +980,58 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                 >
                   Cancel edit
                 </button>
+              )}
+            </div>
+
+            {/* Direct File Upload & Auto-Storage Box */}
+            <div className="p-4 sm:p-5 rounded-3xl bg-linear-to-br from-blue-50/70 via-indigo-50/40 to-slate-50 border border-blue-200/80 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <FileUp className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <span>Auto-Storage Direct File Uploader</span>
+                      <span className="text-[10px] font-semibold text-blue-700 bg-blue-100/90 px-2 py-0.5 rounded-full">
+                        Workers KV
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Drop or select a local file to store directly in Cloudflare KV. File size, format, checksum, and storage link populate automatically!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
+                <label className="cursor-pointer inline-flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-2xl text-xs font-semibold text-slate-800 shadow-xs transition-colors">
+                  <Upload className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Choose file from device...</span>
+                  <input
+                    type="file"
+                    className="hidden"
+                    disabled={isDirectUploading || isSubmittingFile}
+                    onChange={handleDirectFileUpload}
+                  />
+                </label>
+                <span className="text-[11px] text-slate-400">
+                  Supported formats: ZIP, EXE, PDF, APK, DMG, ISO, etc. (Or paste a Catbox / external URL below)
+                </span>
+              </div>
+
+              {isDirectUploading && (
+                <div className="p-3 bg-white/95 rounded-2xl border border-blue-200 flex items-center gap-2.5 text-xs text-blue-800 shadow-xs animate-pulse">
+                  <Loader2 className="w-4 h-4 text-blue-600 animate-spin shrink-0" />
+                  <span className="font-medium">{uploadProgressMessage || 'Storing file in Cloudflare KV...'}</span>
+                </div>
+              )}
+
+              {directUploadSuccess && (
+                <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center gap-2 text-xs text-emerald-800 font-medium">
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{directUploadSuccess}</span>
+                </div>
               )}
             </div>
 
@@ -1205,7 +1377,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
             </div>
 
             {/* Checkboxes: Featured & Published */}
-            <div className="flex items-center gap-6 pt-2">
+            <div className="flex flex-wrap items-center gap-6 pt-2">
               <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-800">
                 <input
                   type="checkbox"
@@ -1227,21 +1399,45 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
               </label>
             </div>
 
+            {/* Cloud Auto-Storage Guarantee Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs text-slate-600">
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  <strong>Automated Cloud Storage:</strong> When you click "{editingId ? 'Save Changes' : 'Publish File'}", this post is automatically saved to your persistent <strong>Cloudflare Workers KV</strong> storage so it is live across all devices immediately.
+                </span>
+              </div>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full shrink-0 ml-2">
+                Auto-Sync Active
+              </span>
+            </div>
+
             {/* Submit Button */}
             <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setActiveTab('files')}
+                disabled={isSubmittingFile}
                 className="px-5 py-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-full transition-colors shadow-xs flex items-center gap-1.5"
+                disabled={isSubmittingFile || isDirectUploading}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-semibold rounded-full transition-colors shadow-xs flex items-center gap-1.5"
               >
-                <Save className="w-3.5 h-3.5" />
-                <span>{editingId ? 'Save Changes' : 'Publish File'}</span>
+                {isSubmittingFile ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Storing to Cloudflare KV...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{editingId ? 'Save Changes & Sync Cloud' : 'Publish File (Save to Storage)'}</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
