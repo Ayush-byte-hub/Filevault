@@ -40,9 +40,17 @@ export const FilesPage: React.FC<FilesPageProps> = ({
   const [selectedType, setSelectedType] = useState<string>('all');
   const [sortOption, setSortOption] = useState<SortOption>(initialSort);
   const [page, setPage] = useState(1);
+  const [dataVersion, setDataVersion] = useState(0);
   const pageSize = 9;
 
-  const categories = storageService.getCategoriesWithCounts();
+  // Subscribe to storage changes from Cloudflare KV
+  useEffect(() => {
+    return storageService.subscribe(() => {
+      setDataVersion((v) => v + 1);
+    });
+  }, []);
+
+  const categories = useMemo(() => storageService.getCategoriesWithCounts(), [dataVersion]);
 
   // Reset page when filters change
   useEffect(() => {
@@ -79,7 +87,7 @@ export const FilesPage: React.FC<FilesPageProps> = ({
     const paginated = list.slice(0, page * pageSize);
 
     return { files: paginated, total: totalCount };
-  }, [searchQuery, selectedCategory, selectedType, sortOption, page]);
+  }, [searchQuery, selectedCategory, selectedType, sortOption, page, dataVersion]);
 
   const hasMore = filteredFiles.length < total;
 

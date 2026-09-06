@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { FileItem, CategoryId, CloudflareR2Config } from '../types';
 import { storageService, DEFAULT_R2_CONFIG } from '../services/storageService';
 import { CATEGORIES } from '../data/categories';
@@ -41,6 +41,7 @@ import {
   Sparkles,
   HardDrive,
   Check,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AdminPageProps {
@@ -102,6 +103,17 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
   const [passcodeNew, setPasscodeNew] = useState('');
   const [passcodeConfirm, setPasscodeConfirm] = useState('');
 
+  // Global Cloudflare KV Catalog Sync state
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<string | null>(null);
+
+  // Subscribe to storage changes from Cloudflare KV
+  useEffect(() => {
+    return storageService.subscribe(() => {
+      setFilesVersion((v) => v + 1);
+    });
+  }, []);
+
   // Reload files
   const { files: allFiles, total: totalFiles } = useMemo(() => {
     return storageService.getAllFiles({ publishedOnly: false });
@@ -110,6 +122,44 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
   const categories = storageService.getCategoriesWithCounts();
   const totalDownloads = allFiles.reduce((acc, f) => acc + (f.downloadCount || 0), 0);
   const featuredCount = allFiles.filter((f) => f.isFeatured).length;
+
+  const handlePushAllToCloud = async () => {
+    setIsSyncingCloud(true);
+    try {
+      const ok = await storageService.pushAllFilesToCloud(allFiles);
+      if (ok) {
+        setCloudSyncStatus(`All ${allFiles.length} files successfully synchronized to Cloudflare Workers KV!`);
+        showToast('Global KV Synchronized', `Pushed ${allFiles.length} files to Cloudflare KV. They are now live on every user device!`, 'success');
+      } else {
+        setCloudSyncStatus('Failed to push files to Cloudflare KV. Check worker connection.');
+        showToast('Sync Error', 'Could not push files to Cloudflare KV.', 'error');
+      }
+    } catch (err) {
+      setCloudSyncStatus(`Sync error: ${err}`);
+      showToast('Sync Error', 'Could not push files to Cloudflare KV.', 'error');
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  const handlePullFromCloud = async () => {
+    setIsSyncingCloud(true);
+    try {
+      const res = await storageService.syncWithCloud(true);
+      if (res.success) {
+        setFilesVersion((v) => v + 1);
+        setCloudSyncStatus(`Successfully loaded ${res.count} files from Cloudflare Workers KV!`);
+        showToast('Catalog Updated', `Pulled ${res.count} files from Cloudflare KV.`, 'success');
+      } else {
+        setCloudSyncStatus(`Could not fetch from Cloudflare KV: ${res.error}`);
+        showToast('Fetch Warning', res.error || 'Failed to pull from Cloudflare KV', 'warning');
+      }
+    } catch (err) {
+      setCloudSyncStatus(`Fetch error: ${err}`);
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
 
   // Filtered files for table
   const filteredFiles = useMemo(() => {
@@ -1305,8 +1355,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                       <code className="font-bold text-slate-700">GET /files/:key</code>
                     </div>
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-semibold text-slate-500">Max Value Size:</span>
-                      <span className="font-bold text-slate-800">25 MB per KV key</span>
+                      <span className="font-semibold text-slate-500">Global Sync API:</span>
+                      <code className="font-bold text-emerald-700">GET/POST /api/catalog</code>
                     </div>
                   </div>
                 </div>
@@ -1314,6 +1364,54 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                 <div className="text-[11px] text-slate-500 leading-relaxed pt-1">
                   💡 For files larger than 25MB, simply upload them to Catbox.moe and paste the link into Filestora for unlimited free storage!
                 </div>
+              </div>
+            </div>
+
+            {/* Global Multi-Device Catalog Sync Panel */}
+            <div className="border-t border-slate-100 pt-6 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Cloud className="w-4 h-4 text-blue-600" />
+                    <span>Global Multi-Device Synchronization (Cloudflare KV)</span>
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Files stored in Cloudflare KV replicate globally in milliseconds so they are instantly visible on all user devices and browsers.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                    {allFiles.length} file{allFiles.length !== 1 ? 's' : ''} in directory
+                  </span>
+                </div>
+              </div>
+
+              {cloudSyncStatus && (
+                <div className="p-3 rounded-2xl bg-blue-50 border border-blue-200 text-xs text-blue-800 flex items-center gap-2">
+                  <Check className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>{cloudSyncStatus}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={isSyncingCloud}
+                  onClick={handlePushAllToCloud}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+                  <span>Push All Files to Cloudflare KV</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isSyncingCloud}
+                  onClick={handlePullFromCloud}
+                  className="px-4 py-2 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 border border-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Pull Catalog from Cloudflare KV</span>
+                </button>
               </div>
             </div>
 

@@ -24,6 +24,7 @@ import {
   Share2,
   Lock,
   Cloud,
+  Loader2,
 } from 'lucide-react';
 
 interface FileDetailPageProps {
@@ -38,11 +39,54 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
   onQuickDownload,
 }) => {
   const { showToast } = useToast();
-  const file = storageService.getFileBySlug(slug);
+  const [file, setFile] = useState<FileItem | null>(() => storageService.getFileBySlug(slug) || null);
+  const [loading, setLoading] = useState<boolean>(!storageService.getFileBySlug(slug));
 
   const [copiedHash, setCopiedHash] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+
+  // Sync / fetch file by slug from Cloudflare Workers KV if not in local storage
+  useEffect(() => {
+    const localFile = storageService.getFileBySlug(slug);
+    if (localFile) {
+      setFile(localFile);
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    setLoading(true);
+
+    storageService
+      .fetchFileBySlug(slug)
+      .then((cloudFile) => {
+        if (isMounted) {
+          setFile(cloudFile);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [slug]);
+
+  // Subscribe to storage changes (e.g. background sync finishing from Cloudflare KV)
+  useEffect(() => {
+    return storageService.subscribe(() => {
+      const updated = storageService.getFileBySlug(slug);
+      if (updated) {
+        setFile(updated);
+        setLoading(false);
+      }
+    });
+  }, [slug]);
 
   useEffect(() => {
     if (file) {
@@ -54,6 +98,20 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
       document.title = 'FileVault - Minimal File Hosting & Downloads';
     };
   }, [file]);
+
+  if (loading) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-20 text-center space-y-4">
+        <div className="w-12 h-12 mx-auto text-slate-800 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-slate-900" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">Loading File Distribution...</h2>
+        <p className="text-xs text-slate-500 max-w-sm mx-auto">
+          Checking Cloudflare edge storage for verified release details.
+        </p>
+      </div>
+    );
+  }
 
   if (!file) {
     return (

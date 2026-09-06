@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { FileItem, SortOption } from '../types';
 import { storageService } from '../services/storageService';
 import { CATEGORIES } from '../data/categories';
@@ -33,6 +33,14 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOption, setSortOption] = useState<SortOption>('newest');
   const [selectedType, setSelectedType] = useState<string>('all');
+  const [dataVersion, setDataVersion] = useState(0);
+
+  // Subscribe to storage changes from Cloudflare KV
+  useEffect(() => {
+    return storageService.subscribe(() => {
+      setDataVersion((v) => v + 1);
+    });
+  }, []);
 
   const getCategoryIcon = (iconName: string) => {
     switch (iconName) {
@@ -67,7 +75,7 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({
     }
 
     return { files: list, total: list.length };
-  }, [category.id, searchQuery, sortOption, selectedType]);
+  }, [category.id, searchQuery, sortOption, selectedType, dataVersion]);
 
   const availableTypes = ['all', 'ZIP', 'EXE', 'DMG', 'PDF', 'MP4', 'TAR.GZ'];
 

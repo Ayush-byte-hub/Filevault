@@ -50,6 +50,11 @@ function AppContent() {
     };
   }, []);
 
+  useEffect(() => {
+    // Initial global sync from Cloudflare Workers KV
+    storageService.syncWithCloud().catch(() => {});
+  }, []);
+
   const navigate = (path: string) => {
     // Sync hash and pathname
     window.location.hash = path;

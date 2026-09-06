@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { FileItem } from '../types';
 import { storageService } from '../services/storageService';
 import { FileCard } from '../components/FileCard';
@@ -30,12 +30,20 @@ interface HomePageProps {
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onQuickDownload }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [dataVersion, setDataVersion] = useState(0);
 
-  const featuredFiles = storageService.getFeaturedFiles(4);
-  const latestFiles = storageService.getLatestFiles(6);
-  const popularFiles = storageService.getPopularFiles(6);
-  const categories = storageService.getCategoriesWithCounts();
-  const recentlyViewed = storageService.getRecentlyViewedFiles();
+  // Subscribe to storage changes from Cloudflare KV
+  useEffect(() => {
+    return storageService.subscribe(() => {
+      setDataVersion((v) => v + 1);
+    });
+  }, []);
+
+  const featuredFiles = useMemo(() => storageService.getFeaturedFiles(4), [dataVersion]);
+  const latestFiles = useMemo(() => storageService.getLatestFiles(6), [dataVersion]);
+  const popularFiles = useMemo(() => storageService.getPopularFiles(6), [dataVersion]);
+  const categories = useMemo(() => storageService.getCategoriesWithCounts(), [dataVersion]);
+  const recentlyViewed = useMemo(() => storageService.getRecentlyViewedFiles(), [dataVersion]);
 
   const handleHeroSearch = (e: React.FormEvent) => {
     e.preventDefault();

@@ -16,6 +16,194 @@ export const DEFAULT_R2_CONFIG: CloudflareR2Config = {
 };
 
 class FileStorageService {
+  private listeners: Array<() => void> = [];
+  private syncInProgress = false;
+  private hasSyncedWithCloud = false;
+
+  constructor() {
+    // Automatically trigger background cloud synchronization on startup
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        this.syncWithCloud().catch(() => {});
+      }, 100);
+    }
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  private notifyListeners(): void {
+    this.listeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (e) {
+        console.error('Error in storage listener callback', e);
+      }
+    });
+  }
+
+  public getWorkerApiUrl(path: string): string {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    // If the browser origin is on Cloudflare Workers (*.workers.dev or custom production domain)
+    if (
+      typeof window !== 'undefined' &&
+      window.location.origin &&
+      !window.location.origin.includes('localhost') &&
+      !window.location.origin.includes('3000') &&
+      !window.location.origin.includes('asia-southeast1.run.app')
+    ) {
+      return cleanPath;
+    }
+    // Fallback to the live Cloudflare Worker
+    return `https://filestora.kaflea991.workers.dev${cleanPath}`;
+  }
+
+  public getSyncStatus(): { hasSynced: boolean; inProgress: boolean } {
+    return {
+      hasSynced: this.hasSyncedWithCloud,
+      inProgress: this.syncInProgress,
+    };
+  }
+
+  /**
+   * Synchronize the local files catalog with Cloudflare KV storage.
+   * This ensures files uploaded from any device or browser are immediately visible on all devices!
+   */
+  public async syncWithCloud(force = false): Promise<{ success: boolean; count: number; error?: string }> {
+    if (this.syncInProgress && !force) {
+      return { success: true, count: this.getStoredFiles().length };
+    }
+
+    this.syncInProgress = true;
+    try {
+      const res = await fetch(this.getWorkerApiUrl('/api/catalog'), {
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Catalog request returned HTTP status ${res.status}`);
+      }
+
+      const data = await res.json();
+      const localFiles = this.getStoredFiles();
+
+      if (data.success && Array.isArray(data.files) && data.files.length > 0) {
+        // Cloud KV has files! Merge them:
+        const cloudFilesMap = new Map<string, FileItem>();
+        for (const f of data.files) {
+          if (f && f.id) cloudFilesMap.set(f.id, f);
+        }
+
+        const merged: FileItem[] = [...data.files];
+        // Retain any local files not yet in cloud and push them up
+        for (const local of localFiles) {
+          if (!cloudFilesMap.has(local.id)) {
+            merged.push(local);
+            this.pushFileToCloud(local).catch(() => {});
+          }
+        }
+
+        this.saveStoredFiles(merged);
+        this.hasSyncedWithCloud = true;
+        this.notifyListeners();
+        return { success: true, count: merged.length };
+      } else {
+        // Cloud KV is uninitialized - push our local/default files to KV
+        if (localFiles.length > 0) {
+          await this.pushAllFilesToCloud(localFiles);
+        }
+        this.hasSyncedWithCloud = true;
+        return { success: true, count: localFiles.length };
+      }
+    } catch (err) {
+      console.warn('Could not sync catalog with Cloudflare Workers KV:', err);
+      return {
+        success: false,
+        count: this.getStoredFiles().length,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      this.syncInProgress = false;
+    }
+  }
+
+  public async pushFileToCloud(file: FileItem): Promise<boolean> {
+    try {
+      const res = await fetch(this.getWorkerApiUrl('/api/catalog/file'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file }),
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('Failed to push file to Cloudflare KV:', err);
+      return false;
+    }
+  }
+
+  public async pushAllFilesToCloud(files: FileItem[]): Promise<boolean> {
+    try {
+      const res = await fetch(this.getWorkerApiUrl('/api/catalog'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files }),
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('Failed to push all files to Cloudflare KV:', err);
+      return false;
+    }
+  }
+
+  public async deleteFileFromCloud(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(this.getWorkerApiUrl(`/api/catalog/file/${encodeURIComponent(id)}`), {
+        method: 'DELETE',
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('Failed to delete file from Cloudflare KV:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Fetch a file by its slug. Checks local cache first; if not found locally,
+   * queries Cloudflare KV directly so direct links work across all devices!
+   */
+  public async fetchFileBySlug(slug: string): Promise<FileItem | null> {
+    const local = this.getFileBySlug(slug);
+    if (local) return local;
+
+    try {
+      const res = await fetch(this.getWorkerApiUrl(`/api/catalog/${encodeURIComponent(slug)}`), {
+        headers: { Accept: 'application/json' },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.file) {
+          const files = this.getStoredFiles();
+          const exists = files.some((f) => f.id === data.file.id || f.slug === data.file.slug);
+          if (!exists) {
+            files.unshift(data.file);
+            this.saveStoredFiles(files);
+            this.notifyListeners();
+          }
+          return data.file;
+        }
+      }
+    } catch (err) {
+      console.warn(`Could not fetch file "${slug}" from Cloudflare KV:`, err);
+    }
+
+    return null;
+  }
+
   private getStoredFiles(): FileItem[] {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
@@ -177,6 +365,13 @@ class FileStorageService {
 
     files.unshift(created);
     this.saveStoredFiles(files);
+    this.notifyListeners();
+
+    // Persist to Cloudflare KV so it appears globally across all devices
+    this.pushFileToCloud(created).catch((err) => {
+      console.error('Failed to sync new file to Cloudflare KV:', err);
+    });
+
     return created;
   }
 
@@ -197,6 +392,13 @@ class FileStorageService {
 
     files[index] = updated;
     this.saveStoredFiles(files);
+    this.notifyListeners();
+
+    // Persist updated file to Cloudflare KV
+    this.pushFileToCloud(updated).catch((err) => {
+      console.error('Failed to sync updated file to Cloudflare KV:', err);
+    });
+
     return updated;
   }
 
@@ -205,6 +407,13 @@ class FileStorageService {
     const filtered = files.filter((f) => f.id !== id);
     if (filtered.length === files.length) return false;
     this.saveStoredFiles(filtered);
+    this.notifyListeners();
+
+    // Delete from Cloudflare KV
+    this.deleteFileFromCloud(id).catch((err) => {
+      console.error('Failed to delete file from Cloudflare KV:', err);
+    });
+
     return true;
   }
 
@@ -214,6 +423,13 @@ class FileStorageService {
     if (target) {
       target.downloadCount = (target.downloadCount || 0) + 1;
       this.saveStoredFiles(files);
+      this.notifyListeners();
+
+      // Send to Cloudflare Worker
+      fetch(this.getWorkerApiUrl(`/api/catalog/download/${encodeURIComponent(id)}`), {
+        method: 'POST',
+      }).catch(() => {});
+
       return target.downloadCount;
     }
     return 0;
@@ -221,6 +437,8 @@ class FileStorageService {
 
   public resetToDefaultData(): void {
     this.saveStoredFiles(INITIAL_FILES);
+    this.notifyListeners();
+    this.pushAllFilesToCloud(INITIAL_FILES).catch(() => {});
   }
 
   public exportJson(): string {

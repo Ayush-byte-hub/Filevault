@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { storageService } from '../services/storageService';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { AdPlaceholder } from '../components/AdPlaceholder';
@@ -19,7 +19,15 @@ interface CategoriesPageProps {
 }
 
 export const CategoriesPage: React.FC<CategoriesPageProps> = ({ onNavigate }) => {
-  const categories = storageService.getCategoriesWithCounts();
+  const [dataVersion, setDataVersion] = useState(0);
+
+  useEffect(() => {
+    return storageService.subscribe(() => {
+      setDataVersion((v) => v + 1);
+    });
+  }, []);
+
+  const categories = useMemo(() => storageService.getCategoriesWithCounts(), [dataVersion]);
 
   const getCategoryIcon = (iconName: string) => {
     switch (iconName) {

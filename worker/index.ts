@@ -93,7 +93,11 @@ export default {
       pathname.startsWith('/files/') ||
       pathname === '/download' ||
       pathname === '/api/download' ||
-      pathname === '/api/health';
+      pathname === '/api/health' ||
+      pathname === '/api/catalog' ||
+      pathname.startsWith('/api/catalog/') ||
+      pathname === '/api/files' ||
+      pathname.startsWith('/api/files/');
 
     if (
       isApiRoute &&
@@ -117,6 +121,148 @@ export default {
         kvBound: !!env.FILE_VAULT,
         catboxSupported: true,
       });
+    }
+
+    // =========================================================================
+    // Catalog Endpoints (Syncs global files across all user devices via KV)
+    // =========================================================================
+    const CATALOG_KEY = '__filestora_catalog_v1';
+
+    // 1. GET /api/catalog or GET /api/files - Get complete list of files stored in Cloudflare KV
+    if ((pathname === '/api/catalog' || pathname === '/api/files') && method === 'GET') {
+      try {
+        const catalog = (await env.FILE_VAULT.get(CATALOG_KEY, 'json')) as any[] | null;
+        return jsonResponse({
+          success: true,
+          files: Array.isArray(catalog) ? catalog : [],
+          count: Array.isArray(catalog) ? catalog.length : 0,
+          initialized: Array.isArray(catalog) && catalog.length > 0,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Failed to fetch catalog from KV: ${errorMsg}`, 500);
+      }
+    }
+
+    // 2. POST /api/catalog or /api/catalog/sync - Overwrite/sync entire catalog in KV
+    if ((pathname === '/api/catalog' || pathname === '/api/catalog/sync') && method === 'POST') {
+      try {
+        const body = (await request.json().catch(() => null)) as { files?: any[] } | null;
+        if (!body || !Array.isArray(body.files)) {
+          return errorResponse('Invalid payload. Expected JSON body { files: FileItem[] }', 400);
+        }
+
+        await env.FILE_VAULT.put(CATALOG_KEY, JSON.stringify(body.files));
+        return jsonResponse({
+          success: true,
+          message: 'Catalog synchronized successfully to Cloudflare KV',
+          count: body.files.length,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Failed to save catalog to KV: ${errorMsg}`, 500);
+      }
+    }
+
+    // 3. POST /api/catalog/file or /api/files/save - Add or update a single file in the KV catalog
+    if ((pathname === '/api/catalog/file' || pathname === '/api/files/save') && (method === 'POST' || method === 'PUT')) {
+      try {
+        const body = (await request.json().catch(() => null)) as { file?: any } | any | null;
+        const file = body?.file || body;
+        if (!file || !file.id || !file.slug) {
+          return errorResponse('Invalid file payload. Must contain at least "id" and "slug"', 400);
+        }
+
+        let catalog = (await env.FILE_VAULT.get(CATALOG_KEY, 'json')) as any[] | null;
+        if (!Array.isArray(catalog)) {
+          catalog = [];
+        }
+
+        const existingIndex = catalog.findIndex((f) => f.id === file.id || f.slug === file.slug);
+        if (existingIndex >= 0) {
+          catalog[existingIndex] = { ...catalog[existingIndex], ...file };
+        } else {
+          catalog.unshift(file);
+        }
+
+        await env.FILE_VAULT.put(CATALOG_KEY, JSON.stringify(catalog));
+        return jsonResponse({
+          success: true,
+          message: 'File saved to Cloudflare KV catalog',
+          file,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Failed to save file to KV: ${errorMsg}`, 500);
+      }
+    }
+
+    // 4. GET /api/catalog/:slug - Retrieve single file details by slug or id from KV
+    if (pathname.startsWith('/api/catalog/') && method === 'GET') {
+      try {
+        const rawParam = pathname.slice('/api/catalog/'.length);
+        const slug = decodeURIComponent(rawParam).trim();
+
+        if (!slug || slug === 'sync' || slug === 'file') {
+          return errorResponse('Valid slug or ID is required', 400);
+        }
+
+        const catalog = (await env.FILE_VAULT.get(CATALOG_KEY, 'json')) as any[] | null;
+        if (Array.isArray(catalog)) {
+          const file = catalog.find((f) => f.slug === slug || f.id === slug);
+          if (file) {
+            return jsonResponse({ success: true, file });
+          }
+        }
+
+        return errorResponse(`File with slug or ID "${slug}" not found in catalog.`, 404);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Failed to fetch file from KV: ${errorMsg}`, 500);
+      }
+    }
+
+    // 5. DELETE /api/catalog/file/:id - Remove a file from the KV catalog
+    if (pathname.startsWith('/api/catalog/file/') && method === 'DELETE') {
+      try {
+        const rawId = pathname.slice('/api/catalog/file/'.length);
+        const id = decodeURIComponent(rawId).trim();
+
+        let catalog = (await env.FILE_VAULT.get(CATALOG_KEY, 'json')) as any[] | null;
+        if (Array.isArray(catalog)) {
+          catalog = catalog.filter((f) => f.id !== id && f.slug !== id);
+          await env.FILE_VAULT.put(CATALOG_KEY, JSON.stringify(catalog));
+        }
+
+        return jsonResponse({
+          success: true,
+          message: `File "${id}" removed from Cloudflare KV catalog`,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Failed to delete file from KV catalog: ${errorMsg}`, 500);
+      }
+    }
+
+    // 6. POST /api/catalog/download/:id - Increment download counter in KV
+    if (pathname.startsWith('/api/catalog/download/') && method === 'POST') {
+      try {
+        const rawId = pathname.slice('/api/catalog/download/'.length);
+        const id = decodeURIComponent(rawId).trim();
+
+        let catalog = (await env.FILE_VAULT.get(CATALOG_KEY, 'json')) as any[] | null;
+        if (Array.isArray(catalog)) {
+          const target = catalog.find((f) => f.id === id || f.slug === id);
+          if (target) {
+            target.downloadCount = (target.downloadCount || 0) + 1;
+            await env.FILE_VAULT.put(CATALOG_KEY, JSON.stringify(catalog));
+            return jsonResponse({ success: true, downloadCount: target.downloadCount });
+          }
+        }
+        return jsonResponse({ success: true, downloadCount: 0 });
+      } catch {
+        return jsonResponse({ success: false });
+      }
     }
 
     // =========================================================================
