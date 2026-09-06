@@ -482,7 +482,8 @@ class FileStorageService {
     openInNewTab: boolean;
     fileName: string;
   } {
-    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
+    const safeExt = file.fileType ? file.fileType.toLowerCase().replace(/[^a-z0-9]/g, '') : 'zip';
+    const fileName = `${this.generateSlug(file.title || 'download')}-${file.version || '1.0'}.${safeExt}`;
 
     // If admin set downloadMode to 'redirect' with a destination URL
     if (file.downloadMode === 'redirect' && file.redirectUrl && file.redirectUrl.trim()) {
@@ -494,18 +495,94 @@ class FileStorageService {
       };
     }
 
-    // Default: Direct file download stream through Cloudflare Worker proxy
-    const catboxUrl = file.externalUrl || file.fileUrl;
-    const workerDownloadUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(
-      catboxUrl
-    )}&name=${encodeURIComponent(fileName)}`;
+    // Direct file download: determine target URL
+    const rawUrl = file.externalUrl || file.fileUrl || '';
+
+    // If it's a Cloudflare Workers KV file
+    if (rawUrl.startsWith('/files/')) {
+      const sep = rawUrl.includes('?') ? '&' : '?';
+      return {
+        targetUrl: `https://filestora.kaflea991.workers.dev${rawUrl}${sep}download=true`,
+        isRedirect: false,
+        openInNewTab: false,
+        fileName,
+      };
+    }
+
+    // If it's Catbox.moe or external HTTP/HTTPS
+    if (this.isCatboxUrl(rawUrl) || (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+      const workerDownloadUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(
+        rawUrl
+      )}&name=${encodeURIComponent(fileName)}`;
+
+      return {
+        targetUrl: workerDownloadUrl,
+        isRedirect: false,
+        openInNewTab: false,
+        fileName,
+      };
+    }
 
     return {
-      targetUrl: workerDownloadUrl,
+      targetUrl: rawUrl,
       isRedirect: false,
       openInNewTab: false,
       fileName,
     };
+  }
+
+  // Non-intrusive background anchor download trigger
+  public triggerAnchorDownload(url: string, filename: string): void {
+    const link = document.createElement('a');
+    link.style.display = 'none';
+    link.href = url;
+    link.setAttribute('download', filename);
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noopener noreferrer');
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      if (link.parentNode) {
+        link.parentNode.removeChild(link);
+      }
+    }, 1000);
+  }
+
+  // Master execution for both direct downloads and masked redirections
+  public executeDownload(file: FileItem): void {
+    try {
+      this.incrementDownload(file.id);
+    } catch {
+      // ignore
+    }
+
+    const { targetUrl, isRedirect, openInNewTab, fileName } = this.getDownloadAction(file);
+
+    // 1. External Redirection
+    if (isRedirect && targetUrl) {
+      if (openInNewTab) {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        window.location.href = targetUrl;
+      }
+      return;
+    }
+
+    // 2. Direct File Download: Check for dummy/placeholder URLs
+    const rawUrl = file.externalUrl || file.fileUrl || '';
+    const isDummyPlaceholder =
+      !rawUrl ||
+      rawUrl.includes('cloudflare-r2.com/filevault-public/placeholder') ||
+      rawUrl.includes('storage.cloudflare-r2.com') ||
+      rawUrl.includes('example.zip');
+
+    if (!isDummyPlaceholder && targetUrl) {
+      this.triggerAnchorDownload(targetUrl, fileName);
+      return;
+    }
+
+    // Fallback: Generate real verified distribution package locally so demo files always download cleanly
+    this.triggerFileDownload(file);
   }
 
   // Cloudflare R2 Configuration
@@ -574,13 +651,13 @@ class FileStorageService {
       // Use Worker proxy to deliver customized friendly attachment filename and avoid referrer issues
       const safeExt = file.fileType?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'zip';
       const cleanName = `${this.generateSlug(file.title)}-${file.version}.${safeExt}`;
-      return `/download?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(cleanName)}`;
+      return `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(rawUrl)}&name=${encodeURIComponent(cleanName)}`;
     }
 
     // If it's a Workers KV path
     if (rawUrl.startsWith('/files/')) {
       const sep = rawUrl.includes('?') ? '&' : '?';
-      return `${rawUrl}${sep}download=true`;
+      return `https://filestora.kaflea991.workers.dev${rawUrl}${sep}download=true`;
     }
 
     return rawUrl;
@@ -608,26 +685,26 @@ class FileStorageService {
 
   // Real download trigger (downloads from Catbox.moe, Workers KV, or creates verified fallback)
   public triggerFileDownload(file: FileItem, forceDirect = false): void {
-    this.incrementDownload(file.id);
+    try {
+      this.incrementDownload(file.id);
+    } catch {
+      // ignore
+    }
 
     const targetUrl = this.getDownloadUrl(file, { forceDirect });
     const isRealUrl =
       targetUrl &&
       (targetUrl.startsWith('http://') || targetUrl.startsWith('https://') || targetUrl.startsWith('/'));
-    const isDummyPlaceholder = targetUrl.includes('cloudflare-r2.com/filevault-public/placeholder');
+    const isDummyPlaceholder =
+      !targetUrl ||
+      targetUrl.includes('cloudflare-r2.com/filevault-public/placeholder') ||
+      targetUrl.includes('storage.cloudflare-r2.com') ||
+      targetUrl.includes('example.zip');
 
     if (isRealUrl && !isDummyPlaceholder) {
       const safeExt = file.fileType.toLowerCase().replace(/[^a-z0-9]/g, '') || 'zip';
       const filename = `${this.generateSlug(file.title)}-${file.version}.${safeExt}`;
-
-      const link = document.createElement('a');
-      link.href = targetUrl;
-      link.download = filename;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      this.triggerAnchorDownload(targetUrl, filename);
       return;
     }
 

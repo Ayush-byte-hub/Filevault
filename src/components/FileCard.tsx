@@ -71,37 +71,16 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
       e.stopPropagation();
     }
 
-    try {
-      storageService.incrementDownload(file.id);
-    } catch {
-      // ignore
-    }
-
-    const { targetUrl, isRedirect, openInNewTab } = storageService.getDownloadAction(file);
-
-    // Set CPAGrip variables dynamically for target redirect and analytics tracking
-    (window as any).target_url = targetUrl;
-    (window as any).tracking_id = encodeURIComponent(file.title);
-
     if (onQuickDownload) {
       try {
         onQuickDownload(file);
+        return;
       } catch {
         // ignore
       }
     }
 
-    // Trigger CPAGrip overlay locker
-    if (typeof (window as any).call_locker === 'function') {
-      (window as any).call_locker();
-    } else {
-      // Direct action if locker is unreachable
-      if (isRedirect && openInNewTab) {
-        window.open(targetUrl, '_blank', 'noopener,noreferrer');
-      } else {
-        window.location.href = targetUrl;
-      }
-    }
+    storageService.executeDownload(file);
   };
 
   return (

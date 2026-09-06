@@ -356,9 +356,13 @@ export default {
         const contentRange = externalResponse.headers.get('content-range');
         const dispositionMode = url.searchParams.get('disposition') === 'inline' ? 'inline' : 'attachment';
 
+        const safeFilename = finalFilename.replace(/["\r\n\\]/g, '');
+        const asciiFilename = safeFilename.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const encodedFilename = encodeURIComponent(safeFilename);
+
         const responseHeaders: Record<string, string> = {
           'Content-Type': contentType,
-          'Content-Disposition': `${dispositionMode}; filename="${encodeURIComponent(finalFilename)}"`,
+          'Content-Disposition': `${dispositionMode}; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
           'Accept-Ranges': 'bytes',
           'Cache-Control': 'public, max-age=86400',
           ...CORS_HEADERS,
