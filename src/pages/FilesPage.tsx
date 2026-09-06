@@ -110,34 +110,11 @@ export const FilesPage: React.FC<FilesPageProps> = ({
    * CPAGrip Content Locker Widget Download Handler for File List
    */
   const handleDownloadClick = (file: FileItem) => {
-    try {
-      storageService.incrementDownload(file.id);
-    } catch {
-      // ignore
-    }
-
-    const catboxUrl = file.externalUrl || file.fileUrl;
-    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
-    const targetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
-
-    // Set CPAGrip variables dynamically for target redirect and analytics tracking
-    (window as any).target_url = targetUrl;
-    (window as any).tracking_id = encodeURIComponent(file.title);
-
     if (onQuickDownload) {
-      try {
-        onQuickDownload(file);
-      } catch {
-        // ignore
-      }
+      onQuickDownload(file);
+      return;
     }
-
-    // Trigger CPAGrip overlay locker
-    if (typeof (window as any).call_locker === 'function') {
-      (window as any).call_locker();
-    } else {
-      window.location.href = targetUrl;
-    }
+    storageService.executeDownload(file);
   };
 
   return (

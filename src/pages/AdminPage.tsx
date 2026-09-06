@@ -1220,7 +1220,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                     )}
                   </div>
                   <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Downloads directly from your website via Cloudflare Worker proxy/KV storage. Visitors stay on your site.
+                    Downloads directly from your website via edge proxy. Catbox.moe links are completely cloaked and streamed from your site without any redirection.
                   </p>
                 </button>
 
@@ -1338,19 +1338,19 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                 />
 
                 {storageService.isCatboxUrl(formData.fileUrl) ? (
-                  <div className="mt-2 p-2.5 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-between text-[11px] text-amber-900">
-                    <div className="flex items-center gap-1.5 font-medium">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>Catbox.moe URL active • Filestora edge proxy will stream & download directly</span>
+                  <div className="mt-2 p-3 rounded-2xl bg-emerald-50 border border-emerald-200/80 space-y-1.5 text-[11px] text-emerald-950">
+                    <div className="flex items-center justify-between font-semibold">
+                      <div className="flex items-center gap-1.5 text-emerald-800">
+                        <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Catbox.moe Link Protected & Cloaked</span>
+                      </div>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                        100% Direct Download
+                      </span>
                     </div>
-                    <a
-                      href={formData.fileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-amber-800 underline font-semibold shrink-0 ml-2"
-                    >
-                      Test Direct Link
-                    </a>
+                    <p className="text-slate-600 leading-relaxed">
+                      This Catbox link is completely hidden from visitors. When users click download, the file streams directly through your website edge proxy. Users will <strong>never</strong> see the Catbox URL or be redirected to Catbox.
+                    </p>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1 ml-2">

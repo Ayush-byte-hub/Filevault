@@ -92,7 +92,9 @@ export default {
       pathname === '/files' ||
       pathname.startsWith('/files/') ||
       pathname === '/download' ||
+      pathname.startsWith('/download/') ||
       pathname === '/api/download' ||
+      pathname.startsWith('/api/download/') ||
       pathname.startsWith('/redirect/') ||
       pathname.startsWith('/api/redirect/') ||
       pathname === '/api/health' ||
@@ -295,6 +297,165 @@ export default {
     }
 
     // =========================================================================
+    // 8. GET /api/download/:slug or /download/:slug - Stream file by slug directly from web
+    // Streams Catbox or KV files without ever redirecting to or exposing Catbox to visitors
+    // =========================================================================
+    if (
+      (pathname.startsWith('/api/download/') || (pathname.startsWith('/download/') && pathname !== '/download/')) &&
+      method === 'GET'
+    ) {
+      try {
+        const prefix = pathname.startsWith('/api/download/') ? '/api/download/' : '/download/';
+        const rawSlug = pathname.slice(prefix.length);
+        const slug = decodeURIComponent(rawSlug).trim();
+
+        if (!slug) {
+          return errorResponse('Slug parameter is required in /download/:slug', 400);
+        }
+
+        // 1. Fetch file record from catalog
+        const catalog = (await env.FILE_VAULT?.get(CATALOG_KEY, 'json')) as any[] | null;
+        const file = Array.isArray(catalog) ? catalog.find((f) => f.slug === slug || f.id === slug) : null;
+
+        let targetStorageUrl = file?.fileUrl || file?.externalUrl || '';
+        let targetFilename = file ? `${file.title || file.slug}.${(file.fileType || 'zip').toLowerCase()}` : `${slug}.zip`;
+
+        // Check if slug is a direct key in KV if catalog doesn't have it
+        if (!targetStorageUrl && env.FILE_VAULT) {
+          const { value, metadata } = await env.FILE_VAULT.getWithMetadata<{
+            filename?: string;
+            isExternal?: boolean;
+            externalUrl?: string;
+          }>(slug, 'arrayBuffer');
+
+          if (value) {
+            const cleanName = metadata?.filename || `${slug}.zip`;
+            const safeFilename = cleanName.replace(/["\r\n\\]/g, '');
+            const asciiFilename = safeFilename.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const encodedFilename = encodeURIComponent(safeFilename);
+
+            return new Response(value as ArrayBuffer, {
+              status: 200,
+              headers: {
+                'Content-Type': guessContentType(cleanName),
+                'Content-Disposition': `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
+                'Cache-Control': 'public, max-age=86400',
+                ...CORS_HEADERS,
+              },
+            });
+          }
+
+          if (metadata?.isExternal && metadata.externalUrl) {
+            targetStorageUrl = metadata.externalUrl;
+            targetFilename = metadata.filename || `${slug}.zip`;
+          }
+        }
+
+        if (!targetStorageUrl) {
+          return errorResponse(`File with identifier "${slug}" was not found`, 404);
+        }
+
+        // If file is configured in redirect mode, redirect to target
+        if (file && file.downloadMode === 'redirect' && file.redirectUrl) {
+          file.downloadCount = (file.downloadCount || 0) + 1;
+          env.FILE_VAULT?.put(CATALOG_KEY, JSON.stringify(catalog)).catch(() => {});
+          return Response.redirect(file.redirectUrl, 302);
+        }
+
+        // If it's a relative KV path (/files/...)
+        if (targetStorageUrl.startsWith('/files/') && env.FILE_VAULT) {
+          const key = decodeURIComponent(targetStorageUrl.slice('/files/'.length));
+          const kvData = await env.FILE_VAULT.get(key, 'arrayBuffer');
+          if (kvData) {
+            if (file && Array.isArray(catalog)) {
+              file.downloadCount = (file.downloadCount || 0) + 1;
+              env.FILE_VAULT?.put(CATALOG_KEY, JSON.stringify(catalog)).catch(() => {});
+            }
+
+            const safeFilename = targetFilename.replace(/["\r\n\\]/g, '');
+            const asciiFilename = safeFilename.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const encodedFilename = encodeURIComponent(safeFilename);
+
+            return new Response(kvData as ArrayBuffer, {
+              status: 200,
+              headers: {
+                'Content-Type': guessContentType(targetFilename),
+                'Content-Disposition': `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
+                'Cache-Control': 'public, max-age=86400',
+                ...CORS_HEADERS,
+              },
+            });
+          }
+        }
+
+        // External Storage URL (e.g. Catbox.moe)
+        let parsedTarget: URL;
+        try {
+          parsedTarget = new URL(targetStorageUrl);
+        } catch {
+          return errorResponse('Invalid backend storage URL', 500);
+        }
+
+        const fetchHeaders: Record<string, string> = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+        };
+
+        if (parsedTarget.hostname.includes('catbox.moe')) {
+          fetchHeaders['Referer'] = 'https://catbox.moe/';
+          fetchHeaders['Origin'] = 'https://catbox.moe';
+        }
+
+        const rangeHeader = request.headers.get('range');
+        if (rangeHeader) {
+          fetchHeaders['Range'] = rangeHeader;
+        }
+
+        const externalResponse = await fetch(parsedTarget.toString(), {
+          headers: fetchHeaders,
+          redirect: 'follow',
+        });
+
+        if (!externalResponse.ok && externalResponse.status !== 206) {
+          return errorResponse(`Failed to stream file from storage backend (Status: ${externalResponse.status})`, 502);
+        }
+
+        // Increment download count
+        if (file && Array.isArray(catalog) && env.FILE_VAULT) {
+          file.downloadCount = (file.downloadCount || 0) + 1;
+          env.FILE_VAULT.put(CATALOG_KEY, JSON.stringify(catalog)).catch(() => {});
+        }
+
+        const contentType = externalResponse.headers.get('content-type') || guessContentType(targetFilename);
+        const contentLength = externalResponse.headers.get('content-length');
+        const contentRange = externalResponse.headers.get('content-range');
+
+        const safeFilename = targetFilename.replace(/["\r\n\\]/g, '');
+        const asciiFilename = safeFilename.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const encodedFilename = encodeURIComponent(safeFilename);
+
+        const responseHeaders: Record<string, string> = {
+          'Content-Type': contentType,
+          'Content-Disposition': `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=86400',
+          ...CORS_HEADERS,
+        };
+
+        if (contentLength) responseHeaders['Content-Length'] = contentLength;
+        if (contentRange) responseHeaders['Content-Range'] = contentRange;
+
+        return new Response(externalResponse.body, {
+          status: externalResponse.status,
+          headers: responseHeaders,
+        });
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Stream error: ${errorMsg}`, 500);
+      }
+    }
+
+    // =========================================================================
     // Catbox.moe / External File Download Proxy: GET /download or /api/download
     // =========================================================================
     if ((pathname === '/download' || pathname === '/api/download') && method === 'GET') {
@@ -327,12 +488,13 @@ export default {
 
         // Fetch the file from external host (e.g. files.catbox.moe)
         const fetchHeaders: Record<string, string> = {
-          'User-Agent': 'Filestora-Worker/1.0',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           'Accept': '*/*',
         };
 
         if (parsedTarget.hostname.includes('catbox.moe')) {
           fetchHeaders['Referer'] = 'https://catbox.moe/';
+          fetchHeaders['Origin'] = 'https://catbox.moe';
         }
 
         // Forward Range header if browser requested resume/chunked download
@@ -347,8 +509,7 @@ export default {
         });
 
         if (!externalResponse.ok && externalResponse.status !== 206) {
-          // If proxy fetch failed, fallback to 302 redirect so user still gets file
-          return Response.redirect(parsedTarget.toString(), 302);
+          return errorResponse(`Failed to fetch file stream (Status: ${externalResponse.status})`, 502);
         }
 
         const contentType = externalResponse.headers.get('content-type') || guessContentType(finalFilename);

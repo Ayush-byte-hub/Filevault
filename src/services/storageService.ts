@@ -511,9 +511,12 @@ class FileStorageService {
 
     // If it's Catbox.moe or external HTTP/HTTPS
     if (this.isCatboxUrl(rawUrl) || (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
-      const workerDownloadUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(
-        rawUrl
-      )}&name=${encodeURIComponent(fileName)}`;
+      // Prefer clean cloaked endpoint by slug so the external storage link is never exposed
+      const workerDownloadUrl = file.slug
+        ? `https://filestora.kaflea991.workers.dev/api/download/${encodeURIComponent(file.slug)}`
+        : `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(
+            rawUrl
+          )}&name=${encodeURIComponent(fileName)}`;
 
       return {
         targetUrl: workerDownloadUrl,
@@ -643,10 +646,10 @@ class FileStorageService {
     const rawUrl = file.fileUrl?.trim() || '';
     if (!rawUrl) return '';
 
-    // If it's a Catbox.moe URL
-    if (this.isCatboxUrl(rawUrl)) {
-      if (options?.forceDirect) {
-        return rawUrl;
+    // If it's a Catbox.moe URL or external HTTP/HTTPS link
+    if (this.isCatboxUrl(rawUrl) || rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      if (file.slug) {
+        return `https://filestora.kaflea991.workers.dev/api/download/${encodeURIComponent(file.slug)}`;
       }
       // Use Worker proxy to deliver customized friendly attachment filename and avoid referrer issues
       const safeExt = file.fileType?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'zip';

@@ -449,17 +449,13 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
             <p className="text-xs text-slate-600 leading-relaxed">
               {file.downloadMode === 'redirect'
                 ? 'Delivered through an authenticated high-speed distribution mirror with verified hash integrity.'
-                : storageService.isCatboxUrl(file.fileUrl)
-                ? 'Hosted on Catbox.moe high-speed storage, streamable and downloadable directly via Filestora edge.'
-                : file.fileUrl.startsWith('/files/')
-                ? 'Stored in Cloudflare Workers KV namespace vault with low-latency edge retrieval.'
-                : 'Hosted on high-speed edge distribution with unthrottled throughput.'}
+                : 'Delivered directly through Filestora high-speed edge distribution network with verified package integrity.'}
             </p>
 
             <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/60 font-mono text-[11px] text-slate-600 break-all">
               {file.downloadMode === 'redirect'
                 ? `secure-mirror://${file.slug}.distribution`
-                : file.fileUrl}
+                : `filestora://edge-storage/${file.slug}.${(file.fileType || 'zip').toLowerCase()}`}
             </div>
 
             <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 font-medium">
@@ -467,11 +463,7 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
                 Origin:{' '}
                 {file.downloadMode === 'redirect'
                   ? 'Verified Release Mirror'
-                  : storageService.isCatboxUrl(file.fileUrl)
-                  ? 'Catbox.moe'
-                  : file.fileUrl.startsWith('/files/')
-                  ? 'Workers KV (FILE_VAULT)'
-                  : 'Direct CDN'}
+                  : 'Filestora Edge CDN'}
               </span>
               <span className="font-bold text-emerald-600">Online</span>
             </div>
