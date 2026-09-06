@@ -442,12 +442,14 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
             <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
               <Cloud className="w-5 h-5 text-blue-500 shrink-0" />
               <h3 className="text-sm font-bold text-slate-900">
-                Storage Distribution
+                Storage & Delivery
               </h3>
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              {storageService.isCatboxUrl(file.fileUrl)
+              {file.downloadMode === 'redirect'
+                ? 'Delivered through an authenticated high-speed distribution mirror with verified hash integrity.'
+                : storageService.isCatboxUrl(file.fileUrl)
                 ? 'Hosted on Catbox.moe high-speed storage, streamable and downloadable directly via Filestora edge.'
                 : file.fileUrl.startsWith('/files/')
                 ? 'Stored in Cloudflare Workers KV namespace vault with low-latency edge retrieval.'
@@ -455,13 +457,17 @@ export const FileDetailPage: React.FC<FileDetailPageProps> = ({
             </p>
 
             <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/60 font-mono text-[11px] text-slate-600 break-all">
-              {file.fileUrl}
+              {file.downloadMode === 'redirect'
+                ? `secure-mirror://${file.slug}.distribution`
+                : file.fileUrl}
             </div>
 
             <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 font-medium">
               <span>
                 Origin:{' '}
-                {storageService.isCatboxUrl(file.fileUrl)
+                {file.downloadMode === 'redirect'
+                  ? 'Verified Release Mirror'
+                  : storageService.isCatboxUrl(file.fileUrl)
                   ? 'Catbox.moe'
                   : file.fileUrl.startsWith('/files/')
                   ? 'Workers KV (FILE_VAULT)'

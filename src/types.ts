@@ -37,6 +37,9 @@ export interface FileItem {
   fileUrl: string; // Storage URL (Workers KV, Catbox.moe, or CDN endpoint)
   storageSource?: 'kv' | 'catbox' | 'direct' | 'r2';
   externalUrl?: string;
+  downloadMode?: 'direct' | 'redirect'; // 'direct' = download from website, 'redirect' = masked redirect to link
+  redirectUrl?: string; // Target URL for redirection (hidden from visitors)
+  openInNewTab?: boolean; // Whether to open the redirected link in a new tab
   checksum: string; // SHA-256
   md5Checksum?: string;
   tags: string[];

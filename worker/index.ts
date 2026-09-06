@@ -93,6 +93,8 @@ export default {
       pathname.startsWith('/files/') ||
       pathname === '/download' ||
       pathname === '/api/download' ||
+      pathname.startsWith('/redirect/') ||
+      pathname.startsWith('/api/redirect/') ||
       pathname === '/api/health' ||
       pathname === '/api/catalog' ||
       pathname.startsWith('/api/catalog/') ||
@@ -262,6 +264,33 @@ export default {
         return jsonResponse({ success: true, downloadCount: 0 });
       } catch {
         return jsonResponse({ success: false });
+      }
+    }
+
+    // 7. GET /api/redirect/:slug or /redirect/:slug - Server-side cloaked redirection
+    if ((pathname.startsWith('/api/redirect/') || pathname.startsWith('/redirect/')) && method === 'GET') {
+      try {
+        const prefix = pathname.startsWith('/api/redirect/') ? '/api/redirect/' : '/redirect/';
+        const rawSlug = pathname.slice(prefix.length);
+        const slug = decodeURIComponent(rawSlug).trim();
+
+        const catalog = (await env.FILE_VAULT.get(CATALOG_KEY, 'json')) as any[] | null;
+        if (Array.isArray(catalog)) {
+          const file = catalog.find((f) => f.slug === slug || f.id === slug);
+          if (file) {
+            // Increment download counter asynchronously in KV
+            file.downloadCount = (file.downloadCount || 0) + 1;
+            env.FILE_VAULT.put(CATALOG_KEY, JSON.stringify(catalog)).catch(() => {});
+
+            if (file.downloadMode === 'redirect' && file.redirectUrl) {
+              return Response.redirect(file.redirectUrl, 302);
+            }
+          }
+        }
+        return errorResponse(`File with slug "${slug}" not found or has no redirection configured`, 404);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        return errorResponse(`Redirection error: ${errorMsg}`, 500);
       }
     }
 

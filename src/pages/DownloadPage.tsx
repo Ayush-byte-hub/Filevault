@@ -176,7 +176,12 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({
             <span>Verified Package Ready</span>
           </div>
 
-          {storageService.isCatboxUrl(file.fileUrl) ? (
+          {file.downloadMode === 'redirect' ? (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-800 text-xs font-semibold border border-slate-200">
+              <Sparkles className="w-3.5 h-3.5 text-slate-600" />
+              <span>Verified Mirror Distribution</span>
+            </div>
+          ) : storageService.isCatboxUrl(file.fileUrl) ? (
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-900 text-xs font-semibold border border-amber-200/70">
               <Sparkles className="w-3.5 h-3.5 text-amber-600" />
               <span>Catbox.moe High-Speed Host</span>
@@ -203,10 +208,14 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-center gap-2 text-emerald-700 font-bold text-sm">
                 <CheckCircle2 className="w-5 h-5" />
-                <span>Your download has begun!</span>
+                <span>
+                  {file.downloadMode === 'redirect' ? 'Transfer in progress' : 'Your download has begun!'}
+                </span>
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">
-                If the file did not automatically begin downloading, click the button below to retry immediately.
+                {file.downloadMode === 'redirect'
+                  ? 'Redirecting to your download link. If redirection did not happen automatically, click retry below.'
+                  : 'If the file did not automatically begin downloading, click the button below to retry immediately.'}
               </p>
               <button
                 id="retry-download-btn"
@@ -228,8 +237,8 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({
                 <span>Download Now ({file.fileSize})</span>
               </button>
 
-              {/* Direct Catbox Mirror Option if applicable */}
-              {storageService.isCatboxUrl(file.fileUrl) && (
+              {/* Direct Catbox Mirror Option if applicable (only in direct download mode) */}
+              {file.downloadMode !== 'redirect' && storageService.isCatboxUrl(file.fileUrl) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -244,7 +253,9 @@ export const DownloadPage: React.FC<DownloadPageProps> = ({
               )}
 
               <p className="text-[11px] text-slate-400">
-                {storageService.isCatboxUrl(file.fileUrl)
+                {file.downloadMode === 'redirect'
+                  ? 'High-speed transfer powered by verified distribution network. Safe and unthrottled.'
+                  : storageService.isCatboxUrl(file.fileUrl)
                   ? 'High-speed transfer powered by Catbox.moe and Cloudflare Workers edge. Safe and unthrottled.'
                   : file.fileUrl.startsWith('/files/')
                   ? 'High-speed transfer powered by Cloudflare Workers KV edge distribution. Verified package.'

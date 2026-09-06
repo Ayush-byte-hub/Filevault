@@ -69,9 +69,7 @@ function AppContent() {
       // ignore
     }
 
-    const catboxUrl = file.externalUrl || file.fileUrl;
-    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
-    const targetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
+    const { targetUrl, isRedirect, openInNewTab } = storageService.getDownloadAction(file);
 
     // Set CPAGrip variables dynamically for target redirect and analytics tracking
     (window as any).target_url = targetUrl;
@@ -81,7 +79,11 @@ function AppContent() {
     if (typeof (window as any).call_locker === 'function') {
       (window as any).call_locker();
     } else {
-      window.location.href = targetUrl;
+      if (isRedirect && openInNewTab) {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        window.location.href = targetUrl;
+      }
     }
   };
 

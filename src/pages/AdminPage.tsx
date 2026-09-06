@@ -81,6 +81,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
     thumbnailUrl: '',
     screenshots: '', // comma separated or newlines
     fileUrl: '',
+    downloadMode: 'direct' as 'direct' | 'redirect',
+    redirectUrl: '',
+    openInNewTab: false,
     checksum: '',
     tags: '',
     compatibility: '',
@@ -201,6 +204,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
       thumbnailUrl: file.thumbnailUrl || '',
       screenshots: file.screenshots?.join('\n') || '',
       fileUrl: file.fileUrl || '',
+      downloadMode: file.downloadMode || 'direct',
+      redirectUrl: file.redirectUrl || '',
+      openInNewTab: file.openInNewTab ?? false,
       checksum: file.checksum,
       tags: file.tags.join(', '),
       compatibility: file.compatibility || '',
@@ -226,7 +232,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
       version: 'v1.0.0',
       thumbnailUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80',
       screenshots: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=1200&auto=format&fit=crop&q=80',
-      fileUrl: 'https://storage.cloudflare-r2.com/filevault-public/releases/new-file.zip',
+      fileUrl: 'https://files.catbox.moe/example.zip',
+      downloadMode: 'direct',
+      redirectUrl: '',
+      openInNewTab: false,
       checksum: '',
       tags: 'open-source, utility, modern',
       compatibility: 'Windows 10/11, macOS 12+, Linux',
@@ -357,6 +366,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
         .map((t) => t.trim())
         .filter(Boolean);
 
+      if (formData.downloadMode === 'redirect' && !formData.redirectUrl.trim()) {
+        showToast('Redirection URL Required', 'Please provide a destination URL for the external redirection download mode.', 'error');
+        return;
+      }
+
       const cleanFileUrl = formData.fileUrl.trim();
       const isCatbox = storageService.isCatboxUrl(cleanFileUrl);
       const isKV = cleanFileUrl.startsWith('/files/');
@@ -377,6 +391,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
         fileUrl: cleanFileUrl || (isCatbox ? cleanFileUrl : `/files/${formData.slug}`),
         storageSource,
         externalUrl: isCatbox ? cleanFileUrl : undefined,
+        downloadMode: formData.downloadMode,
+        redirectUrl: formData.downloadMode === 'redirect' ? formData.redirectUrl.trim() : undefined,
+        openInNewTab: formData.downloadMode === 'redirect' ? formData.openInNewTab : false,
         checksum: formData.checksum.trim() || storageService.generateDummySha256(formData.title),
         tags: tagsArray.length > 0 ? tagsArray : ['general'],
         compatibility: formData.compatibility.trim(),
@@ -862,9 +879,18 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                               <span>/{file.slug}</span>
                               <span>•</span>
                               <span>{file.version}</span>
-                              <span className="inline-flex items-center gap-0.5 text-[9px] font-sans font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200/60">
-                                <Cloud className="w-2.5 h-2.5" /> KV Stored
-                              </span>
+                              {file.downloadMode === 'redirect' ? (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[9px] font-sans font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200/60"
+                                  title="Cloaked external redirection"
+                                >
+                                  <ArrowUpRight className="w-2.5 h-2.5" /> Redirection
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-sans font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200/60">
+                                  <HardDrive className="w-2.5 h-2.5" /> Direct Download
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1151,6 +1177,124 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
                   className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-full"
                 />
               </div>
+            </div>
+
+            {/* Download Delivery Mode: Direct Download vs External Redirection */}
+            <div className="p-4 sm:p-5 rounded-3xl bg-slate-50/80 border border-slate-200/90 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <span>Download Action & Delivery Method</span>
+                    <span className="text-[10px] font-semibold text-slate-500 bg-white px-2 py-0.5 rounded-full border border-slate-200">
+                      User Experience
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Choose what happens when visitors click "Download" on your site for this file.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Mode 1: Direct Site Download */}
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, downloadMode: 'direct' })}
+                  className={`p-4 rounded-2xl border text-left transition-all ${
+                    formData.downloadMode === 'direct'
+                      ? 'bg-white border-blue-600 ring-2 ring-blue-600/10 shadow-xs'
+                      : 'bg-white/60 hover:bg-white border-slate-200 text-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+                        formData.downloadMode === 'direct' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        <HardDrive className="w-4 h-4" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-900">Direct Download from Site</span>
+                    </div>
+                    {formData.downloadMode === 'direct' && (
+                      <span className="w-2 h-2 rounded-full bg-blue-600" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Downloads directly from your website via Cloudflare Worker proxy/KV storage. Visitors stay on your site.
+                  </p>
+                </button>
+
+                {/* Mode 2: External Redirection */}
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, downloadMode: 'redirect' })}
+                  className={`p-4 rounded-2xl border text-left transition-all ${
+                    formData.downloadMode === 'redirect'
+                      ? 'bg-white border-purple-600 ring-2 ring-purple-600/10 shadow-xs'
+                      : 'bg-white/60 hover:bg-white border-slate-200 text-slate-600'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+                        formData.downloadMode === 'redirect' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        <ArrowUpRight className="w-4 h-4" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-900">External Link Redirection</span>
+                    </div>
+                    {formData.downloadMode === 'redirect' && (
+                      <span className="w-2 h-2 rounded-full bg-purple-600" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Redirects visitors to an external URL when they click download. The target URL is cloaked and hidden from visitors.
+                  </p>
+                </button>
+              </div>
+
+              {/* Redirection Configuration (only when Redirection mode selected) */}
+              {formData.downloadMode === 'redirect' && (
+                <div className="p-4 rounded-2xl bg-purple-50/80 border border-purple-200/90 space-y-3 mt-2">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-purple-950">
+                        Target Redirection URL * (Hidden / Cloaked from Visitors)
+                      </label>
+                      <span className="text-[10px] font-semibold text-purple-700 bg-purple-100/70 px-2 py-0.5 rounded-full">
+                        Masked Target
+                      </span>
+                    </div>
+                    <input
+                      type="url"
+                      required={formData.downloadMode === 'redirect'}
+                      value={formData.redirectUrl}
+                      onChange={(e) => setFormData({ ...formData, redirectUrl: e.target.value })}
+                      placeholder="https://your-partner-site.com/download/package or external link"
+                      className="w-full px-4 py-2.5 text-xs bg-white border border-purple-200 rounded-full font-mono text-slate-900 focus:outline-hidden focus:border-purple-600 focus:ring-1 focus:ring-purple-600"
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 text-[11px] text-purple-900">
+                    <div className="flex items-start gap-1.5 leading-relaxed">
+                      <Lock className="w-3.5 h-3.5 text-purple-700 shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Cloaked Link:</strong> Visitors will <em>not</em> see this destination URL on cards or details; they will only see the normal download button and be seamlessly redirected upon clicking.
+                      </span>
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer font-semibold text-purple-950 shrink-0 bg-white/70 px-3 py-1.5 rounded-xl border border-purple-200/60 hover:bg-white transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={formData.openInNewTab}
+                        onChange={(e) => setFormData({ ...formData, openInNewTab: e.target.checked })}
+                        className="w-3.5 h-3.5 rounded text-purple-600 focus:ring-0"
+                      />
+                      <span>Open link in new tab</span>
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Storage URL & Checksum */}

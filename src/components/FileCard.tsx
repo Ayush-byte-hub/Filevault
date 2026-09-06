@@ -77,9 +77,7 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
       // ignore
     }
 
-    const catboxUrl = file.externalUrl || file.fileUrl;
-    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
-    const targetUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(catboxUrl)}&name=${encodeURIComponent(fileName)}`;
+    const { targetUrl, isRedirect, openInNewTab } = storageService.getDownloadAction(file);
 
     // Set CPAGrip variables dynamically for target redirect and analytics tracking
     (window as any).target_url = targetUrl;
@@ -97,8 +95,12 @@ export const FileCard: React.FC<FileCardProps> = ({ file, onNavigate, onQuickDow
     if (typeof (window as any).call_locker === 'function') {
       (window as any).call_locker();
     } else {
-      // Fallback direct download if script is unreachable
-      window.location.href = targetUrl;
+      // Direct action if locker is unreachable
+      if (isRedirect && openInNewTab) {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        window.location.href = targetUrl;
+      }
     }
   };
 

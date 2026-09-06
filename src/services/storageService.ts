@@ -476,6 +476,38 @@ class FileStorageService {
     }
   }
 
+  public getDownloadAction(file: FileItem): {
+    targetUrl: string;
+    isRedirect: boolean;
+    openInNewTab: boolean;
+    fileName: string;
+  } {
+    const fileName = `${file.title}.${file.fileType.toLowerCase()}`;
+
+    // If admin set downloadMode to 'redirect' with a destination URL
+    if (file.downloadMode === 'redirect' && file.redirectUrl && file.redirectUrl.trim()) {
+      return {
+        targetUrl: file.redirectUrl.trim(),
+        isRedirect: true,
+        openInNewTab: file.openInNewTab ?? false,
+        fileName,
+      };
+    }
+
+    // Default: Direct file download stream through Cloudflare Worker proxy
+    const catboxUrl = file.externalUrl || file.fileUrl;
+    const workerDownloadUrl = `https://filestora.kaflea991.workers.dev/download?url=${encodeURIComponent(
+      catboxUrl
+    )}&name=${encodeURIComponent(fileName)}`;
+
+    return {
+      targetUrl: workerDownloadUrl,
+      isRedirect: false,
+      openInNewTab: false,
+      fileName,
+    };
+  }
+
   // Cloudflare R2 Configuration
   public getR2Config(): CloudflareR2Config {
     try {
